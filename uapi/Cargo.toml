@@ -1,0 +1,20 @@
+[package]
+name = "uapi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axerrno = "0.1"
+axio = { version = "0.1" }
+log = "0.4"
+
+# 内部依赖
+ucore = { path = "../ucore" }
+uvfs = { path = "../xmodules/uvfs" }
+ucache = { path = "../xmodules/ucache", optional = true }
+unotify = { path = "../xmodules/unotify", optional = true }
+
+[features]
+default = []
+cache = ["ucache"]
+notify = ["unotify"]

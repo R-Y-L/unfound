@@ -1,0 +1,14 @@
+# Unfound 平台配置
+# QEMU RISC-V 64位虚拟机
+
+# 内存布局
+kernel-base = "0x80200000"
+memory-size = "128M"
+
+# 设备
+smp = 1
+uart = "0x10000000"
+
+# 文件系统
+rootfs = "fat32"
+block-device = "virtio-blk"
