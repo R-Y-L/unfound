@@ -218,3 +218,25 @@ pub fn run_idle() -> ! {
         axhal::asm::wait_for_irqs();
     }
 }
+
+/// Extension trait for AxTaskRef to access task extensions.
+pub trait AxTaskRefExt {
+    /// Get a reference to the task extended data.
+    ///
+    /// Returns `Ok(&T)` if the task extension is initialized and of type `T`,
+    /// otherwise returns `Err(&'static str)`.
+    fn task_ext_ref<T: Sized>(&self) -> Result<&T, &'static str>
+    where
+        TaskInner: TaskExtRef<T>;
+}
+
+impl AxTaskRefExt for AxTaskRef {
+    fn task_ext_ref<T: Sized>(&self) -> Result<&T, &'static str>
+    where
+        TaskInner: TaskExtRef<T>,
+    {
+        // Access the inner TaskInner through the scheduler task wrapper
+        // AxTask types from axsched implement Deref to TaskInner
+        Ok(self.as_ref().task_ext())
+    }
+}

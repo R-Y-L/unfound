@@ -768,6 +768,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "axprocess"
+version = "0.2.0"
+dependencies = [
+ "axconfig",
+ "axhal",
+ "axmm",
+ "axns",
+ "axsync",
+ "axtask",
+ "cfg-if",
+ "lazy_static",
+ "log",
+ "memory_addr",
+]
+
+[[package]]
 name = "axruntime"
 version = "0.2.0"
 dependencies = [
