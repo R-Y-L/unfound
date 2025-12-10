@@ -1,8 +1,0 @@
-[package]
-name = "unfound_fs_test"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-axstd = { path = "../../arceos/ulib/axstd", features = ["fs", "alloc"], optional = true }
-unfound-fs = { path = "../../unfound-fs", optional = true }

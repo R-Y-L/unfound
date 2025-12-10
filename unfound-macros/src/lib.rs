@@ -1,10 +1,10 @@
 //! Unfound 过程宏 - 用于扩展 ArceOS 文件系统
 //! 
-//! 提供 `#[unfound_hook]` 宏,在函数执行前后自动注入 UNotify 事件触发和 UCache 更新
+//! 提供 `#[unfound_hook]` 宏,在函数执行前后自动注入 UNotify 事件触发
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn, parse_quote};
+use syn::{parse_macro_input, ItemFn, Meta, NestedMeta};
 
 /// 为函数添加 Unfound 钩子
 /// 
@@ -18,7 +18,6 @@ use syn::{parse_macro_input, ItemFn, parse_quote};
 /// 
 /// 参数:
 /// - `event`: UNotify 事件类型 (Access, Modify, Create, Delete)
-/// - `cache_action`: UCache 操作 (Read, Write, Invalidate)
 /// - `path_param`: 路径参数名 (默认 "path")
 #[proc_macro_attribute]
 pub fn unfound_hook(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -28,16 +27,14 @@ pub fn unfound_hook(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(attr as syn::AttributeArgs);
     
     let mut event_type = None;
-    let mut cache_action = None;
     let mut path_param = "path".to_string();
     
     for arg in attr_args {
-        if let syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) = arg {
+        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg {
             let ident = nv.path.get_ident().unwrap().to_string();
             if let syn::Lit::Str(lit) = nv.lit {
                 match ident.as_str() {
                     "event" => event_type = Some(lit.value()),
-                    "cache_action" => cache_action = Some(lit.value()),
                     "path_param" => path_param = lit.value(),
                     _ => {}
                 }
@@ -56,9 +53,9 @@ pub fn unfound_hook(attr: TokenStream, item: TokenStream) -> TokenStream {
         let event_ident = syn::Ident::new(&event, proc_macro2::Span::call_site());
         let path_ident = syn::Ident::new(&path_param, proc_macro2::Span::call_site());
         quote! {
-            if let Some(watcher) = ::unfound_fs::get_unotify_watcher() {
-                let event = ::unfound_fs::NotifyEvent::new(
-                    ::unfound_fs::EventType::#event_ident,
+            if let Some(watcher) = unotify::get_watcher() {
+                let event = unotify::NotifyEvent::new(
+                    unotify::EventType::#event_ident,
                     alloc::string::ToString::to_string(#path_ident)
                 );
                 watcher.trigger(event);
@@ -68,39 +65,10 @@ pub fn unfound_hook(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
     
-    // 生成缓存操作代码
-    let cache_code = if let Some(action) = cache_action {
-        let path_ident = syn::Ident::new(&path_param, proc_macro2::Span::call_site());
-        match action.as_str() {
-            "Read" => quote! {
-                if let Some(cache) = ::unfound_fs::get_ucache() {
-                    if let Some(cached) = cache.get(#path_ident) {
-                        return Ok(cached);
-                    }
-                }
-            },
-            "Write" => quote! {
-                if let Some(cache) = ::unfound_fs::get_ucache() {
-                    cache.put(#path_ident, &result);
-                }
-            },
-            "Invalidate" => quote! {
-                if let Some(cache) = ::unfound_fs::get_ucache() {
-                    cache.invalidate(#path_ident);
-                }
-            },
-            _ => quote! {}
-        }
-    } else {
-        quote! {}
-    };
-    
     // 重新组装函数
     let expanded = quote! {
         #(#fn_attrs)*
         #fn_vis #fn_sig {
-            #cache_code
-            
             #event_trigger
             
             let result = (|| #fn_block)();

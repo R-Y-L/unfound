@@ -12,7 +12,7 @@ mod event;
 mod watcher;
 
 pub use event::{NotifyEvent, EventType};
-pub use watcher::FileWatcher;
+pub use watcher::{FileWatcher, WatchDescriptor};
 
 use axerrno::AxResult;
 use spin::Mutex;

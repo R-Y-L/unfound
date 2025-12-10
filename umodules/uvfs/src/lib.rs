@@ -8,8 +8,7 @@ mod file_wrapper;
 pub use vfs_ops::VfsOps;
 pub use file_wrapper::FileWrapper;
 
-// 重新导出 ucache 和 unotify 的类型
-pub use ucache::PAGE_SIZE;
+// 重新导出 unotify 的类型
 pub use unotify::{NotifyEvent, EventType};
 
 use axerrno::AxResult;
