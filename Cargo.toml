@@ -2,11 +2,15 @@
 resolver = "2"
 
 members = [
-    "uapi",
-    "ucore",
+    "unfound-macros",
+    "unfound-fs",
     "xmodules/uvfs",
     "xmodules/ucache",
     "xmodules/unotify",
+]
+
+exclude = [
+    "apps/unfound_fs_test",
 ]
 
 [workspace.package]
@@ -37,44 +41,3 @@ axdisplay = { path = "arceos/modules/axdisplay" }
 axns = { path = "arceos/modules/axns" }
 axdma = { path = "arceos/modules/axdma" }
 axipi = { path = "arceos/modules/axipi" }
-
-[package]
-name = "unfound"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-# ArceOS 核心模块
-axalloc = { path = "arceos/modules/axalloc" }
-axhal = { path = "arceos/modules/axhal" }
-axfs = { path = "arceos/modules/axfs" }
-axtask = { path = "arceos/modules/axtask" }
-axlog = { path = "arceos/modules/axlog" }
-axdriver = { path = "arceos/modules/axdriver" }
-axconfig = { path = "arceos/modules/axconfig" }
-axruntime = { path = "arceos/modules/axruntime" }
-
-# 其他依赖
-axerrno = "0.1"
-log = "0.4"
-
-# Unfound 自定义模块
-uapi = { path = "uapi" }
-ucore = { path = "ucore" }
-uvfs = { path = "xmodules/uvfs" }
-ucache = { path = "xmodules/ucache" }
-unotify = { path = "xmodules/unotify" }
-
-[features]
-default = ["fs"]
-
-# 文件系统特性
-fs = ["axfs/fatfs", "axfs/ramfs", "axfs/devfs"]
-
-# 平台特性
-platform-qemu-virt-riscv = []
-platform-qemu-virt-aarch64 = []
-
-[profile.release]
-opt-level = 3
-lto = true
