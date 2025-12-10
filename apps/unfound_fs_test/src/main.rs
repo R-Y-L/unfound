@@ -119,4 +119,14 @@ fn check_events(expected: usize, event_type: &str) {
     } else {
         println!("  [UNotify] ✗ 无法获取监视器");
     }
+    
+    // 显示 ARC 缓存统计
+    if let Some(cache) = unfound_fs::get_ucache() {
+        let stats = cache.stats();
+        println!("  [ARC Cache] T1: {}, T2: {}, B1: {}, B2: {}, p: {}/{}", 
+            stats.t1_size, stats.t2_size, stats.b1_size, stats.b2_size, 
+            stats.p, stats.capacity);
+        println!("  [ARC Cache] 命中率: {:.2}% ({}/{})", 
+            stats.hit_rate() * 100.0, stats.hits, stats.hits + stats.misses);
+    }
 }

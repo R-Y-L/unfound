@@ -84,18 +84,20 @@ pub mod fops_ext {
         axfs::fops::File::open(path, opts)
     }
     
-    /// 读取文件 (带缓存检查)
+    /// 读取文件 (带 ARC 缓存检查)
     pub fn read_file(path: &str) -> AxResult<alloc::vec::Vec<u8>> {
-        // 先检查缓存
+        use alloc::string::ToString;
+        
+        // 先检查 ARC 缓存
         if let Some(cache) = get_ucache() {
-            if let Some(data) = cache.get(path) {
-                log::debug!("[Unfound-FS] Cache hit: {}", path);
+            if let Some(data) = cache.get(&path.to_string()) {
+                log::debug!("[Unfound-FS] ARC Cache HIT: {}", path);
                 
                 // 触发 Access 事件
                 if let Some(watcher) = get_unotify_watcher() {
                     watcher.trigger(NotifyEvent::new(
                         EventType::Access,
-                        alloc::string::String::from(path)
+                        path.to_string()
                     ));
                 }
                 
@@ -104,7 +106,7 @@ pub mod fops_ext {
         }
         
         // 缓存未命中,读取文件
-        log::debug!("[Unfound-FS] Cache miss: {}", path);
+        log::debug!("[Unfound-FS] ARC Cache MISS: {}", path);
         let opts = OpenOptions::new().read(true);
         let mut file = axfs::fops::File::open(path, &opts)?;
         
@@ -112,40 +114,42 @@ pub mod fops_ext {
         let mut buf = alloc::vec::Vec::new();
         file.read_to_end(&mut buf)?;
         
-        // 更新缓存
+        // 更新 ARC 缓存
         if let Some(cache) = get_ucache() {
-            cache.put(path, &buf);
+            cache.put(path.to_string(), buf.clone());
         }
         
         // 触发 Access 事件
         if let Some(watcher) = get_unotify_watcher() {
             watcher.trigger(NotifyEvent::new(
                 EventType::Access,
-                alloc::string::String::from(path)
+                path.to_string()
             ));
         }
         
         Ok(buf)
     }
     
-    /// 写入文件 (带缓存更新)
+    /// 写入文件 (带 ARC 缓存更新)
     pub fn write_file(path: &str, data: &[u8]) -> AxResult<()> {
+        use alloc::string::ToString;
+        
         let opts = OpenOptions::new().write(true).create(true).truncate(true);
         let mut file = axfs::fops::File::open(path, &opts)?;
         
         use axio::Write;
         file.write_all(data)?;
         
-        // 更新缓存
+        // 更新 ARC 缓存
         if let Some(cache) = get_ucache() {
-            cache.put(path, data);
+            cache.put(path.to_string(), data.to_vec());
         }
         
         // 触发 Modify 事件
         if let Some(watcher) = get_unotify_watcher() {
             watcher.trigger(NotifyEvent::new(
                 EventType::Modify,
-                alloc::string::String::from(path)
+                path.to_string()
             ));
         }
         
@@ -175,21 +179,23 @@ pub mod api_ext {
         result
     }
     
-    /// 删除文件 (带 UNotify 和缓存清理)
+    /// 删除文件 (带 UNotify 和 ARC 缓存清理)
     pub fn remove_file(path: &str) -> AxResult {
+        use alloc::string::ToString;
+        
         let result = axfs::api::remove_file(path);
         
         if result.is_ok() {
-            // 清除缓存
+            // 清除 ARC 缓存
             if let Some(cache) = get_ucache() {
-                cache.invalidate(path);
+                cache.invalidate(&path.to_string());
             }
             
             // 触发 Delete 事件
             if let Some(watcher) = get_unotify_watcher() {
                 watcher.trigger(NotifyEvent::new(
                     EventType::Delete,
-                    alloc::string::String::from(path)
+                    path.to_string()
                 ));
             }
         }

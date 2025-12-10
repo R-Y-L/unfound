@@ -8,7 +8,7 @@ axfs = { path = "../arceos/modules/axfs" }
 unotify = { path = "../xmodules/unotify" }
 ucache = { path = "../xmodules/ucache" }
 unfound-macros = { path = "../unfound-macros" }
-axerrno = { path = "../arceos/modules/axruntime/axerrno" }
+axerrno = "0.1"
 spin = "0.9"
 log = "0.4"
 
