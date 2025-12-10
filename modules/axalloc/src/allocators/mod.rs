@@ -50,12 +50,91 @@ pub use hybrid::HybridAllocator;
 #[cfg(feature = "runtime-switch")]
 pub mod runtime {
     use super::PageAllocator;
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use allocator::AllocError;
+    use core::option::Option;
+    use kspin::SpinNoIrq;
 
-    // Placeholder for runtime switching machinery.
-    static RUNTIME_SWITCH_ENABLED: AtomicBool = AtomicBool::new(true);
+    // Global storage for the runtime-selected page allocator. When `None`,
+    // the system falls back to the built-in page allocator.
+    static GLOBAL_PAGE_ALLOC: SpinNoIrq<Option<Box<dyn PageAllocator>>> =
+        SpinNoIrq::new(None);
 
-    pub fn runtime_enabled() -> bool {
-        RUNTIME_SWITCH_ENABLED.load(Ordering::Relaxed)
+    /// Try to set the global runtime allocator. Overwrites any previous value.
+    pub fn set_runtime_allocator(a: Box<dyn PageAllocator>) {
+        let mut slot = GLOBAL_PAGE_ALLOC.lock();
+        *slot = Some(a);
+    }
+
+    /// Clear the runtime allocator (revert to built-in fallback).
+    pub fn clear_runtime_allocator() {
+        let mut slot = GLOBAL_PAGE_ALLOC.lock();
+        *slot = None;
+    }
+
+    /// Allocate pages via the runtime allocator if present.
+    pub fn alloc_pages(num_pages: usize, align_pow2: usize) -> Result<usize, AllocError> {
+        let slot = GLOBAL_PAGE_ALLOC.lock();
+        if let Some(ref a) = *slot {
+            a.alloc_pages(num_pages, align_pow2)
+        } else {
+            Err(AllocError::NoMemory)
+        }
+    }
+
+    /// Allocate pages at exact location via runtime allocator if present.
+    pub fn alloc_pages_at(start: usize, num_pages: usize, align_pow2: usize) -> Result<usize, AllocError> {
+        let slot = GLOBAL_PAGE_ALLOC.lock();
+        if let Some(ref a) = *slot {
+            a.alloc_pages_at(start, num_pages, align_pow2)
+        } else {
+            Err(AllocError::NoMemory)
+        }
+    }
+
+    /// Deallocate pages via the runtime allocator if present.
+    pub fn dealloc_pages(pos: usize, num_pages: usize) {
+        let slot = GLOBAL_PAGE_ALLOC.lock();
+        if let Some(ref a) = *slot {
+            a.dealloc_pages(pos, num_pages)
+        }
+    }
+
+    /// Helper to create an allocator by name. Recognized names: "buddy",
+    /// "bitmap", "hybrid". Returns an error if the chosen allocator
+    /// is not compiled-in (feature not enabled) or name is unknown.
+    pub fn make_by_name(name: &str) -> Result<Box<dyn PageAllocator>, &'static str> {
+        match name {
+            "buddy" => {
+                #[cfg(feature = "buddy")]
+                {
+                    return Ok(Box::new(crate::allocators::BuddyAllocator::new()));
+                }
+                #[cfg(not(feature = "buddy"))]
+                {
+                    return Err("buddy feature not enabled");
+                }
+            }
+            "bitmap" => {
+                #[cfg(feature = "bitmap")]
+                {
+                    return Ok(Box::new(crate::allocators::BitmapAllocator::new()));
+                }
+                #[cfg(not(feature = "bitmap"))]
+                {
+                    return Err("bitmap feature not enabled");
+                }
+            }
+            "hybrid" => {
+                #[cfg(feature = "hybrid")]
+                {
+                    return Ok(Box::new(crate::allocators::HybridAllocator::new()));
+                }
+                #[cfg(not(feature = "hybrid"))]
+                {
+                    return Err("hybrid feature not enabled");
+                }
+            }
+            _ => Err("unknown allocator name"),
+        }
     }
 }

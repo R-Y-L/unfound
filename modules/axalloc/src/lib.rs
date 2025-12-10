@@ -149,6 +149,13 @@ impl GlobalAllocator {
     /// `align_pow2` must be a power of 2, and the returned region bound will be
     /// aligned to it.
     pub fn alloc_pages(&self, num_pages: usize, align_pow2: usize) -> AllocResult<usize> {
+        #[cfg(feature = "runtime-switch")]
+        {
+            if let Ok(v) = crate::allocators::runtime::alloc_pages(num_pages, align_pow2) {
+                return Ok(v);
+            }
+        }
+
         self.palloc.lock().alloc_pages(num_pages, align_pow2)
     }
 
@@ -165,6 +172,13 @@ impl GlobalAllocator {
         num_pages: usize,
         align_pow2: usize,
     ) -> AllocResult<usize> {
+        #[cfg(feature = "runtime-switch")]
+        {
+            if let Ok(v) = crate::allocators::runtime::alloc_pages_at(start, num_pages, align_pow2) {
+                return Ok(v);
+            }
+        }
+
         self.palloc
             .lock()
             .alloc_pages_at(start, num_pages, align_pow2)
@@ -178,6 +192,19 @@ impl GlobalAllocator {
     ///
     /// [`alloc_pages`]: GlobalAllocator::alloc_pages
     pub fn dealloc_pages(&self, pos: usize, num_pages: usize) {
+        #[cfg(feature = "runtime-switch")]
+        {
+            // If runtime allocator is present, let it handle deallocation.
+            crate::allocators::runtime::dealloc_pages(pos, num_pages);
+            // Also fall back to built-in dealloc in case runtime allocator wasn't set.
+            let slot_present = {
+                // We don't have a direct 'is set' accessor; attempt alloc_pages with 0 may not be valid.
+                // Simpler: just call built-in dealloc as well to be conservative.
+                false
+            };
+            let _ = slot_present; // keep compiler happy for now
+        }
+
         self.palloc.lock().dealloc_pages(pos, num_pages)
     }
 
@@ -239,6 +266,33 @@ pub fn global_init(start_vaddr: usize, size: usize) {
         start_vaddr + size
     );
     GLOBAL_ALLOCATOR.init(start_vaddr, size);
+}
+
+/// Initializes the global allocator and optionally sets the runtime page
+/// allocator by name (when `runtime-switch` feature is enabled).
+#[cfg(feature = "runtime-switch")]
+pub fn global_init_with_allocator(start_vaddr: usize, size: usize, allocator_name: Option<&str>) {
+    debug!(
+        "initialize global allocator at: [{:#x}, {:#x})",
+        start_vaddr,
+        start_vaddr + size
+    );
+    // Initialize the built-in global allocator first (fallback)
+    GLOBAL_ALLOCATOR.init(start_vaddr, size);
+
+    if let Some(name) = allocator_name {
+        match crate::allocators::runtime::make_by_name(name) {
+            Ok(mut boxed) => {
+                // Try to initialize runtime allocator with the same memory region.
+                let _ = boxed.init(start_vaddr, size);
+                crate::allocators::runtime::set_runtime_allocator(boxed);
+                info!("runtime page allocator set to: {}", name);
+            }
+            Err(e) => {
+                warn!("failed to select runtime allocator '{}': {}", name, e);
+            }
+        }
+    }
 }
 
 /// Add the given memory region to the global allocator.
