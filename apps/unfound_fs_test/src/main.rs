@@ -1,16 +1,16 @@
 //! Unfound-FS 功能测试
 //! 测试 UNotify 事件触发和 UCache 缓存
 
-#![no_std]
-#![no_main]
+#![cfg_attr(feature = "axstd", no_std)]
+#![cfg_attr(feature = "axstd", no_main)]
 
-#[macro_use]
-extern crate axstd;
-
+#[cfg(feature = "axstd")]
 use axstd::println;
+
+#[cfg(feature = "axstd")]
 use unfound_fs::{fops_ext, api_ext, get_unotify_watcher};
 
-#[no_mangle]
+#[cfg_attr(feature = "axstd", unsafe(no_mangle))]
 fn main() {
     println!("========================================");
     println!("  Unfound-FS 扩展文件系统测试");
@@ -97,6 +97,7 @@ fn main() {
 }
 
 /// 检查并显示 UNotify 事件
+#[cfg(feature = "axstd")]
 fn check_events(expected: usize, event_type: &str) {
     if let Some(watcher) = get_unotify_watcher() {
         let count = watcher.pending_count();
