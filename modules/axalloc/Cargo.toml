@@ -9,20 +9,27 @@ homepage.workspace = true
 repository = "https://github.com/arceos-org/arceos/tree/main/modules/axalloc"
 documentation = "https://arceos-org.github.io/arceos/axalloc/index.html"
 
+[[bin]]
+name = "allocator_test"
+path = "src/bin/allocator_test.rs"
+
 [features]
 # allocator selection: hybrid is the recommended default
+# NOTE: Only ONE of buddy, bitmap, hybrid should be enabled at compile time
 default = ["hybrid", "tlsf", "allocator/page-alloc-256m"]
 tlsf = ["allocator/tlsf"]
 slab = ["allocator/slab"]
 buddy = ["allocator/buddy"]
 bitmap = []
 hybrid = []
-# runtime switching (dynamic dispatch) - not enabled on embedded targets by default
+# runtime switching (dynamic dispatch) - allows dynamic allocator selection at runtime
 runtime-switch = []
 # minimal profile for tiny embedded boards: prefer bitmap allocator to save code size
 minimal = ["bitmap"]
 page-alloc-64g = ["allocator/page-alloc-64g"] # Support up to 64G memory capacity
 page-alloc-4g = ["allocator/page-alloc-4g"] # Support up to 4G memory capacity
+# Enable std for testing binaries
+std = []
 
 [dependencies]
 log = "=0.4.21"

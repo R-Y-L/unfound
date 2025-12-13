@@ -6,9 +6,11 @@
 //! - Supports `alloc_pages`, `alloc_pages_at` (exact start), and `dealloc_pages`.
 
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use allocator::AllocError;
 use core::cmp;
 use kspin::SpinNoIrq;
+use memory_addr::is_aligned;
 use super::PageAllocator;
 
 const PAGE_SIZE: usize = 4096;
@@ -141,7 +143,7 @@ impl PageAllocator for BuddyAllocator {
         if num_pages == 0 { return Err(AllocError::InvalidParam); }
         if align_pow2 < PAGE_SIZE || !align_pow2.is_power_of_two() { return Err(AllocError::InvalidParam); }
         if start < self.base || start >= self.base + self.total_pages * PAGE_SIZE { return Err(AllocError::InvalidParam); }
-        if !crate::is_aligned(start, align_pow2) { return Err(AllocError::InvalidParam); }
+        if !is_aligned(start, align_pow2) { return Err(AllocError::InvalidParam); }
         let idx = (start - self.base) / PAGE_SIZE;
         let needed = num_pages.next_power_of_two();
         let order = ceil_log2(needed);
@@ -155,7 +157,7 @@ impl PageAllocator for BuddyAllocator {
 
     fn dealloc_pages(&self, pos: usize, _num_pages: usize) {
         if pos < self.base || pos >= self.base + self.total_pages * PAGE_SIZE { return; }
-        if !crate::is_aligned(pos, PAGE_SIZE) { return; }
+        if !is_aligned(pos, PAGE_SIZE) { return; }
         let mut idx = (pos - self.base) / PAGE_SIZE;
         let order = match self.alloc_map.lock().remove(&idx) {
             Some(o) => o,
