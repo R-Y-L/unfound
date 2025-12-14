@@ -5,7 +5,7 @@
 //! usable for runtime selection. It's lightweight and mirrors the behavior
 //! of the existing page allocator used by `GlobalAllocator`.
 
-use allocator::{AllocError, BitmapPageAllocator};
+use allocator::{AllocError, BitmapPageAllocator, BaseAllocator, PageAllocator as AllocatorPageAllocator};
 use kspin::SpinNoIrq;
 use super::PageAllocator;
 

@@ -28,6 +28,12 @@ pub trait PageAllocator: Send + Sync {
 
     /// Deallocate contiguous pages starting from `pos`.
     fn dealloc_pages(&self, pos: usize, num_pages: usize);
+
+    /// Optional: Return diagnostics (fragmentation and free memory).
+    /// Default implementation returns (0.0, 0) indicating no diagnostic data available.
+    fn get_stats(&self) -> (f64, usize) {
+        (0.0, 0)
+    }
 }
 
 #[cfg(feature = "buddy")]
