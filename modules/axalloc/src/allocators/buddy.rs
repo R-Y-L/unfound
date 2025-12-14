@@ -123,7 +123,7 @@ impl PageAllocator for BuddyAllocator {
         let mut o = order;
         while o <= self.max_order {
             if let Some(idx) = self.pop_free(o) {
-                let mut cur_idx = idx;
+                let cur_idx = idx;
                 let mut cur_order = o;
                 while cur_order > order {
                     cur_order -= 1;
@@ -175,6 +175,25 @@ impl PageAllocator for BuddyAllocator {
         }
         self.push_free(cur_order, idx);
         *self.used_pages.lock() -= 1usize << order;
+    }
+
+    fn get_stats(&self) -> (f64, usize) {
+        // Calculate fragmentation from free_list snapshot
+        let free_list = self.free_lists.lock();
+        let mut largest_free_block = 0usize;
+        let mut total_free_memory: usize = 0;
+        for v in free_list.iter() {
+            for &b in v.iter() {
+                if b > largest_free_block { largest_free_block = b; }
+                total_free_memory += b;
+            }
+        }
+        let fragmentation = if total_free_memory == 0 {
+            0.0
+        } else {
+            1.0 - (largest_free_block as f64 / total_free_memory as f64)
+        };
+        (fragmentation, total_free_memory)
     }
 }
 

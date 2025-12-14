@@ -49,4 +49,10 @@ impl PageAllocator for BitmapAllocator {
     fn dealloc_pages(&self, pos: usize, num_pages: usize) {
         self.inner.lock().dealloc_pages(pos, num_pages)
     }
+
+    fn get_stats(&self) -> (f64, usize) {
+        // BitmapAllocator doesn't track fragmentation granularly;
+        // for now return default (allocator doesn't expose stats)
+        (0.0, 0)
+    }
 }

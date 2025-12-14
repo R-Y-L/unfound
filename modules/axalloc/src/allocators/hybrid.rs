@@ -331,4 +331,27 @@ impl PageAllocator for HybridAllocator {
 
         *self.used_pages.lock() -= size;
     }
+
+    fn get_stats(&self) -> (f64, usize) {
+        // Simple fragmentation estimate for hybrid allocator
+        // We'll compute based on the free-list large blocks
+        let free_list = self.free_list.lock();
+        let mut largest_free = 0usize;
+        let mut total_free = 0usize;
+
+        for info in free_list.values() {
+            total_free += info.size;
+            if info.size > largest_free {
+                largest_free = info.size;
+            }
+        }
+
+        let fragmentation = if total_free == 0 {
+            0.0
+        } else {
+            1.0 - (largest_free as f64 / total_free as f64)
+        };
+        
+        (fragmentation, total_free)
+    }
 }
