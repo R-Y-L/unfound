@@ -1,0 +1,9 @@
+[package]
+name = "unfound-allocators"
+version = "0.1.0"
+edition.workspace = true
+authors = ["R-Y-L"]
+
+[dependencies]
+axstd = { workspace = true, optional = true }
+axalloc = { path = "../../modules/axalloc" } 
