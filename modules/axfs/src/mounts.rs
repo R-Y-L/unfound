@@ -1,20 +1,28 @@
+use alloc::format;
 use alloc::sync::Arc;
 use axfs_vfs::{VfsNodeType, VfsOps, VfsResult};
-
+// use devfile::{DeviceNode,DiskFile};
+use crate::dev::Disk;
 use crate::fs;
 
 #[cfg(feature = "devfs")]
 pub(crate) fn devfs() -> Arc<fs::devfs::DeviceFileSystem> {
-    let null = fs::devfs::NullDev;
-    let zero = fs::devfs::ZeroDev;
-    let urandom = fs::devfs::UrandomDev::default();
-    let bar = fs::devfs::ZeroDev;
+    // let null = fs::devfs::NullDev;
+    // let zero = fs::devfs::ZeroDev;
+    // let bar = fs::devfs::ZeroDev;
+
+    let null = Arc::new(fs::devfs::NullDev);
+    let zero = Arc::new(fs::devfs::ZeroDev);
+
     let devfs = fs::devfs::DeviceFileSystem::new();
-    let foo_dir = devfs.mkdir("foo");
-    devfs.add("null", Arc::new(null));
-    devfs.add("zero", Arc::new(zero));
-    devfs.add("urandom", Arc::new(urandom));
-    foo_dir.add("bar", Arc::new(bar));
+    // let sda1_dir = devfs.mkdir("sda1");
+    // devfs.add("null", Arc::new(null));
+    // devfs.add("zero", Arc::new(zero));
+    devfs.add("null", null.clone());
+    devfs.add("zero", zero.clone());
+    // devfs.register_device_by_name("sda1",8,0,fs).expect("No Device");
+    // devfs.register_device(1, 3, null);
+    // devfs.register_device(1, 5, zero);
     Arc::new(devfs)
 }
 
@@ -24,27 +32,43 @@ pub(crate) fn ramfs() -> Arc<fs::ramfs::RamFileSystem> {
 }
 
 #[cfg(feature = "procfs")]
-pub(crate) fn procfs() -> VfsResult<Arc<fs::ramfs::RamFileSystem>> {
-    let procfs = fs::ramfs::RamFileSystem::new();
-    let proc_root = procfs.root_dir();
+pub(crate) fn procfs() -> VfsResult<Arc<fs::procfs::ProcFileSystem>> {
+    /*
+     *    let procfs = fs::ramfs::RamFileSystem::new();
+     *    let proc_root = procfs.root_dir();
+     *
+     *    // Create /proc/sys/net/core/somaxconn
+     *    proc_root.create("sys", VfsNodeType::Dir)?;
+     *    proc_root.create("sys/net", VfsNodeType::Dir)?;
+     *    proc_root.create("sys/net/core", VfsNodeType::Dir)?;
+     *    proc_root.create("sys/net/core/somaxconn", VfsNodeType::File)?;
+     *    let file_somaxconn = proc_root.clone().lookup("./sys/net/core/somaxconn")?;
+     *    file_somaxconn.write_at(0, b"4096\n")?;
+     *
+     *    // Create /proc/sys/vm/overcommit_memory
+     *    proc_root.create("sys/vm", VfsNodeType::Dir)?;
+     *    proc_root.create("sys/vm/overcommit_memory", VfsNodeType::File)?;
+     *    let file_over = proc_root.clone().lookup("./sys/vm/overcommit_memory")?;
+     *    file_over.write_at(0, b"0\n")?;
+     *
+     *    // Create /proc/self/stat
+     *    proc_root.create("self", VfsNodeType::Dir)?;
+     *    proc_root.create("self/stat", VfsNodeType::File)?;
+     */
+    use fs::procfs::*;
+    let procfs = ProcFileSystem::new();
+    let proc_root = procfs.root_dir_node().clone();
 
-    // Create /proc/sys/net/core/somaxconn
-    proc_root.create("sys", VfsNodeType::Dir)?;
-    proc_root.create("sys/net", VfsNodeType::Dir)?;
-    proc_root.create("sys/net/core", VfsNodeType::Dir)?;
-    proc_root.create("sys/net/core/somaxconn", VfsNodeType::File)?;
-    let file_somaxconn = proc_root.clone().lookup("./sys/net/core/somaxconn")?;
-    file_somaxconn.write_at(0, b"4096\n")?;
+    let proc_version_string = format!(
+        "{} version {} ({}) (rustc {}) {}\n",
+        axconfig::SYSNAME,      // "AstrancE"
+        axconfig::RELEASE,      // "0.1.0-alpha"
+        axconfig::SYSNAME,         // "builder@astrance.io"
+        "rustc 1.86.0-nightly", // 这里可以硬编码或从构建脚本获取编译器版本
+        axconfig::VERSION       // "#1 SMP PREEMPT_DYNAMIC"
+    );
 
-    // Create /proc/sys/vm/overcommit_memory
-    proc_root.create("sys/vm", VfsNodeType::Dir)?;
-    proc_root.create("sys/vm/overcommit_memory", VfsNodeType::File)?;
-    let file_over = proc_root.clone().lookup("./sys/vm/overcommit_memory")?;
-    file_over.write_at(0, b"0\n")?;
-
-    // Create /proc/self/stat
-    proc_root.create("self", VfsNodeType::Dir)?;
-    proc_root.create("self/stat", VfsNodeType::File)?;
+    proc_root.create_static_file("version", proc_version_string.as_bytes());
 
     Ok(Arc::new(procfs))
 }

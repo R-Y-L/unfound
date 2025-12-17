@@ -7,10 +7,11 @@ pub use self::dir::{DirBuilder, DirEntry, ReadDir};
 pub use self::file::{File, FileType, Metadata, OpenOptions, Permissions};
 
 use alloc::{string::String, vec::Vec};
+use axfs_vfs::VfsNodeRef;
 use axio::{self as io, prelude::*};
 
 /// Returns an iterator over the entries within a directory.
-pub fn read_dir(path: &str) -> io::Result<ReadDir<'_>> {
+pub fn read_dir(path: &str) -> io::Result<ReadDir> {
     ReadDir::new(path)
 }
 
@@ -39,6 +40,14 @@ pub fn read(path: &str) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+pub fn read_at(dir: &VfsNodeRef, path: &str) -> io::Result<Vec<u8>> {
+    let mut file = File::open_at(dir, path)?;
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Read the entire contents of a file into a string.
 pub fn read_to_string(path: &str) -> io::Result<String> {
     let mut file = File::open(path)?;
@@ -56,7 +65,7 @@ pub fn write<C: AsRef<[u8]>>(path: &str, contents: C) -> io::Result<()> {
 /// Given a path, query the file system to get information about a file,
 /// directory, etc.
 pub fn metadata(path: &str) -> io::Result<Metadata> {
-    File::open(path)?.metadata()
+    crate::root::lookup(None, path)?.get_attr().map(Metadata)
 }
 
 /// Creates a new, empty directory at the provided path.
@@ -86,4 +95,9 @@ pub fn remove_file(path: &str) -> io::Result<()> {
 /// This only works then the new path is in the same mounted fs.
 pub fn rename(old: &str, new: &str) -> io::Result<()> {
     crate::root::rename(old, new)
+}
+
+/// check whether absolute path exists.
+pub fn absolute_path_exists(path: &str) -> bool {
+    crate::root::lookup(None, path).is_ok()
 }

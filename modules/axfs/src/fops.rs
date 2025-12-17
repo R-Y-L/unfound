@@ -1,15 +1,19 @@
 //! Low-level filesystem operations.
 
-use axerrno::{AxError, AxResult, ax_err, ax_err_type};
-use axfs_vfs::{VfsError, VfsNodeRef};
-use axio::SeekFrom;
-use cap_access::{Cap, WithCap};
-use core::fmt;
-
 #[cfg(feature = "myfs")]
 pub use crate::dev::Disk;
 #[cfg(feature = "myfs")]
 pub use crate::fs::myfs::MyFileSystemIf;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use axerrno::{AxError, AxResult, LinuxError, LinuxResult, ax_err, ax_err_type};
+use axfs_vfs::{VfsError, VfsNodeAttr, VfsNodeRef};
+use axio::SeekFrom;
+use cap_access::{Cap, WithCap};
+use core::ffi::{c_char, c_int, c_void};
+use core::fmt;
+use spin::Mutex;
 
 /// Alias of [`axfs_vfs::VfsNodeType`].
 pub type FileType = axfs_vfs::VfsNodeType;
@@ -17,12 +21,13 @@ pub type FileType = axfs_vfs::VfsNodeType;
 pub type DirEntry = axfs_vfs::VfsDirEntry;
 /// Alias of [`axfs_vfs::VfsNodeAttr`].
 pub type FileAttr = axfs_vfs::VfsNodeAttr;
+pub type FileAttrX = axfs_vfs::VfsNodeAttrX;
 /// Alias of [`axfs_vfs::VfsNodePerm`].
 pub type FilePerm = axfs_vfs::VfsNodePerm;
 
 /// An opened file object, with open permissions and a cursor.
 pub struct File {
-    node: WithCap<VfsNodeRef>,
+    pub node: WithCap<VfsNodeRef>,
     is_append: bool,
     offset: u64,
 }
@@ -35,24 +40,20 @@ pub struct Directory {
 }
 
 /// Options and flags which can be used to configure how a file is opened.
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct OpenOptions {
     // generic
     read: bool,
     write: bool,
+    execute: bool,
     append: bool,
     truncate: bool,
     create: bool,
     create_new: bool,
+    directory: bool,
     // system-specific
     _custom_flags: i32,
     _mode: u32,
-}
-
-impl Default for OpenOptions {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl OpenOptions {
@@ -62,10 +63,12 @@ impl OpenOptions {
             // generic
             read: false,
             write: false,
+            execute: false,
             append: false,
             truncate: false,
             create: false,
             create_new: false,
+            directory: false,
             // system-specific
             _custom_flags: 0,
             _mode: 0o666,
@@ -78,6 +81,10 @@ impl OpenOptions {
     /// Sets the option for write access.
     pub fn write(&mut self, write: bool) {
         self.write = write;
+    }
+    /// Sets the option for execute access.
+    pub fn execute(&mut self, execute: bool) {
+        self.execute = execute;
     }
     /// Sets the option for the append mode.
     pub fn append(&mut self, append: bool) {
@@ -95,9 +102,36 @@ impl OpenOptions {
     pub fn create_new(&mut self, create_new: bool) {
         self.create_new = create_new;
     }
+    /// Sets the option to open a directory.
+    pub fn directory(&mut self, directory: bool) {
+        self.directory = directory;
+    }
+    /// check whether contains directory.
+    pub fn has_directory(&self) -> bool {
+        self.directory
+    }
+
+    /// Sets the create flags.
+    pub fn set_create(mut self, create: bool, create_new: bool) -> Self {
+        self.create = create;
+        self.create_new = create_new;
+        self
+    }
+
+    /// Sets the read flag.
+    pub fn set_read(mut self, read: bool) -> Self {
+        self.read = read;
+        self
+    }
+
+    /// Sets the write flag.
+    pub fn set_write(mut self, write: bool) -> Self {
+        self.write = write;
+        self
+    }
 
     const fn is_valid(&self) -> bool {
-        if !self.read && !self.write && !self.append {
+        if !self.read && !self.write && !self.append && !self.directory {
             return false;
         }
         match (self.write, self.append) {
@@ -118,7 +152,7 @@ impl OpenOptions {
 }
 
 impl File {
-    fn access_node(&self, cap: Cap) -> AxResult<&VfsNodeRef> {
+    pub fn access_node(&self, cap: Cap) -> AxResult<&VfsNodeRef> {
         self.node.access_or_err(cap, AxError::PermissionDenied)
     }
 
@@ -148,11 +182,9 @@ impl File {
         };
 
         let attr = node.get_attr()?;
-        if attr.is_dir()
-            && (opts.create || opts.create_new || opts.write || opts.append || opts.truncate)
-        {
-            return ax_err!(IsADirectory);
-        }
+        // if attr.is_dir() {
+        //     return ax_err!(IsADirectory);
+        // }
         let access_cap = opts.into();
         if !perm_to_cap(attr.perm()).contains(access_cap) {
             return ax_err!(PermissionDenied);
@@ -173,6 +205,10 @@ impl File {
     /// [`File`] object.
     pub fn open(path: &str, opts: &OpenOptions) -> AxResult<Self> {
         Self::_open_at(None, path, opts)
+    }
+
+    pub fn open_at(dir: &VfsNodeRef, path: &str, opts: &OpenOptions) -> AxResult<Self> {
+        Self::_open_at(Some(dir), path, opts)
     }
 
     /// Truncates the file to the specified size.
@@ -252,6 +288,54 @@ impl File {
     pub fn get_attr(&self) -> AxResult<FileAttr> {
         self.access_node(Cap::empty())?.get_attr()
     }
+
+    pub fn get_attr_x(&self) -> AxResult<FileAttrX> {
+        self.access_node(Cap::empty())?.get_attr_x()
+    }
+    pub fn set_atime(&self, atime: u32, atime_n: u32) -> AxResult<usize> {
+        let r = self.access_node(Cap::empty())?.set_atime(atime, atime_n)?;
+        Ok(r)
+    }
+    pub fn set_mtime(&self, mtime: u32, mtime_n: u32) -> AxResult<usize> {
+        let r = self.access_node(Cap::empty())?.set_mtime(mtime, mtime_n)?;
+        Ok(r)
+    }
+    ///do something for the file extra attributes
+    pub fn get_xattr(
+        &self,
+        name: *const c_char,
+        name_len: usize,
+        buf: *mut c_void,
+        buf_size: usize,
+        data_size: *mut usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::empty())?
+            .get_xattr(name, name_len, buf, buf_size, data_size)
+    }
+    pub fn set_xattr(
+        &self,
+        name: *const c_char,
+        name_len: usize,
+        data: *mut c_void,
+        data_size: usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?
+            .set_xattr(name, name_len, data, data_size)
+    }
+
+    pub fn list_xattr(
+        &self,
+        list: *mut c_char,
+        size: usize,
+        ret_size: *mut usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?
+            .list_xattr(list, size, ret_size)
+    }
+
+    pub fn remove_xattr(&self, name: *const c_char, name_len: usize) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?.remove_xattr(name, name_len)
+    }
 }
 
 impl Directory {
@@ -274,13 +358,17 @@ impl Directory {
             return ax_err!(NotADirectory);
         }
         let access_cap = opts.into();
-        if !perm_to_cap(attr.perm()).contains(access_cap) {
+        let cap = perm_to_cap(attr.perm());
+        if !cap.contains(access_cap) {
             return ax_err!(PermissionDenied);
         }
 
         node.open()?;
         Ok(Self {
-            node: WithCap::new(node, access_cap),
+            // Here we use `cap` as capability instead of `access_cap` to allow the user to manipulate the directory
+            // without explicitly setting [`OpenOptions::execute`], but without requiring execute access even for
+            // directories that don't have this permission.
+            node: WithCap::new(node, cap),
             entry_idx: 0,
         })
     }
@@ -331,6 +419,14 @@ impl Directory {
         crate::root::remove_dir(self.access_at(path)?, path)
     }
 
+    pub fn get_entry_index(&self) -> usize {
+        self.entry_idx
+    }
+    /// 设置读取目录项的进度索引
+    pub fn set_entry_index(&mut self, index: usize) {
+        self.entry_idx = index;
+    }
+
     /// Reads directory entries starts from the current position into the
     /// given buffer. Returns the number of entries read.
     ///
@@ -350,6 +446,58 @@ impl Directory {
     /// This only works then the new path is in the same mounted fs.
     pub fn rename(&self, old: &str, new: &str) -> AxResult {
         crate::root::rename(old, new)
+    }
+
+    /// Gets the file attributes.
+    pub fn get_attr(&self) -> AxResult<FileAttr> {
+        self.access_node(Cap::empty())?.get_attr()
+    }
+
+    pub fn get_attr_x(&self) -> AxResult<FileAttrX> {
+        self.access_node(Cap::empty())?.get_attr_x()
+    }
+    ///set atime and mtime
+    pub fn set_atime(&self, atime: u32, atime_n: u32) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?.set_atime(atime, atime_n)
+    }
+    pub fn set_mtime(&self, mtime: u32, mtime_n: u32) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?.set_mtime(mtime, mtime_n)
+    }
+    ///do something for the dir extra attributes
+    pub fn get_xattr(
+        &self,
+        name: *const c_char,
+        name_len: usize,
+        buf: *mut c_void,
+        buf_size: usize,
+        data_size: *mut usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::empty())?
+            .get_xattr(name, name_len, buf, buf_size, data_size)
+    }
+    pub fn set_xattr(
+        &self,
+        name: *const c_char,
+        name_len: usize,
+        data: *mut c_void,
+        data_size: usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?
+            .set_xattr(name, name_len, data, data_size)
+    }
+
+    pub fn list_xattr(
+        &self,
+        list: *mut c_char,
+        size: usize,
+        ret_size: *mut usize,
+    ) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?
+            .list_xattr(list, size, ret_size)
+    }
+
+    pub fn remove_xattr(&self, name: *const c_char, name_len: usize) -> AxResult<usize> {
+        self.access_node(Cap::WRITE)?.remove_xattr(name, name_len)
     }
 }
 
@@ -398,6 +546,9 @@ impl From<&OpenOptions> for Cap {
         }
         if opts.write | opts.append {
             cap |= Cap::WRITE;
+        }
+        if opts.execute {
+            cap |= Cap::EXECUTE;
         }
         cap
     }

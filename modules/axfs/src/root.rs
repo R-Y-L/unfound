@@ -2,18 +2,49 @@
 //!
 //! TODO: it doesn't work very well if the mount points have containment relationships.
 
-use alloc::{string::String, sync::Arc, vec::Vec};
+use crate::DISKS;
+use crate::fs::fatfs::FatFileSystem;
+use crate::fs::lwext4_rust::Ext4FileSystem;
+use crate::{
+    api::FileType,
+    dev::Disk,
+    fs::{self},
+    mounts,
+};
+use alloc::borrow::ToOwned;
+use alloc::string::{String, ToString};
+use alloc::{sync::Arc, vec::Vec};
+use axdriver::AxBlockDevice;
 use axerrno::{AxError, AxResult, ax_err};
-use axfs_vfs::{VfsNodeAttr, VfsNodeOps, VfsNodeRef, VfsNodeType, VfsOps, VfsResult};
+use axfs_devfs::DeviceFileSystem;
+use axfs_procfs::ProcDir;
+use axfs_vfs::path::canonicalize;
+use axfs_vfs::{VfsNodeAttr, VfsNodeAttrX, VfsNodeOps, VfsNodeRef, VfsNodeType, VfsOps, VfsResult};
+use axio::Read;
 use axns::{ResArc, def_resource};
 use axsync::Mutex;
 use lazyinit::LazyInit;
-
-use crate::{api::FileType, fs, mounts};
+use spin::RwLock;
+// use crate::devfile::DeviceNode;
+use crate::mounts::devfs;
 
 def_resource! {
-    static CURRENT_DIR_PATH: ResArc<Mutex<String>> = ResArc::new();
-    static CURRENT_DIR: ResArc<Mutex<VfsNodeRef>> = ResArc::new();
+    pub static CURRENT_DIR_PATH: ResArc<Mutex<String>> = ResArc::new();
+    pub static CURRENT_DIR: ResArc<Mutex<VfsNodeRef>> = ResArc::new();
+}
+
+impl CURRENT_DIR_PATH {
+    /// Return a copy of the inner path.
+    pub fn copy_inner(&self) -> Mutex<String> {
+        Mutex::new(self.lock().clone())
+    }
+}
+
+impl CURRENT_DIR {
+    /// Return a copy of the CURRENT_DIR_NODE.
+    pub fn copy_inner(&self) -> Mutex<VfsNodeRef> {
+        Mutex::new(self.lock().clone())
+    }
 }
 
 struct MountPoint {
@@ -21,12 +52,14 @@ struct MountPoint {
     fs: Arc<dyn VfsOps>,
 }
 
-struct RootDirectory {
+pub struct RootDirectory {
     main_fs: Arc<dyn VfsOps>,
-    mounts: Vec<MountPoint>,
+    mounts: RwLock<Vec<MountPoint>>,
 }
 
-static ROOT_DIR: LazyInit<Arc<RootDirectory>> = LazyInit::new();
+pub static ROOT_DIR: LazyInit<Arc<RootDirectory>> = LazyInit::new();
+
+pub static PROC_ROOT: LazyInit<Arc<ProcDir>> = LazyInit::new();
 
 impl MountPoint {
     pub fn new(path: &'static str, fs: Arc<dyn VfsOps>) -> Self {
@@ -44,40 +77,39 @@ impl RootDirectory {
     pub const fn new(main_fs: Arc<dyn VfsOps>) -> Self {
         Self {
             main_fs,
-            mounts: Vec::new(),
+            mounts: RwLock::new(Vec::new()),
         }
     }
 
-    pub fn mount(&mut self, path: &'static str, fs: Arc<dyn VfsOps>) -> AxResult {
+    pub fn mount(&self, path: &'static str, fs: Arc<dyn VfsOps>) -> AxResult {
         if path == "/" {
             return ax_err!(InvalidInput, "cannot mount root filesystem");
         }
         if !path.starts_with('/') {
             return ax_err!(InvalidInput, "mount path must start with '/'");
         }
-        if self.mounts.iter().any(|mp| mp.path == path) {
+        if self.mounts.read().iter().any(|mp| mp.path == path) {
             return ax_err!(InvalidInput, "mount point already exists");
         }
         // create the mount point in the main filesystem if it does not exist
         self.main_fs.root_dir().create(path, FileType::Dir)?;
         fs.mount(path, self.main_fs.root_dir().lookup(path)?)?;
-        self.mounts.push(MountPoint::new(path, fs));
+        self.mounts.write().push(MountPoint::new(path, fs));
         Ok(())
     }
 
-    pub fn _umount(&mut self, path: &str) {
-        self.mounts.retain(|mp| mp.path != path);
+    pub fn _umount(&self, path: &str) {
+        self.mounts.write().retain(|mp| mp.path != path);
     }
 
     pub fn contains(&self, path: &str) -> bool {
-        self.mounts.iter().any(|mp| mp.path == path)
+        self.mounts.read().iter().any(|mp| mp.path == path)
     }
 
     fn lookup_mounted_fs<F, T>(&self, path: &str, f: F) -> AxResult<T>
     where
         F: FnOnce(Arc<dyn VfsOps>, &str) -> AxResult<T>,
     {
-        debug!("lookup at root: {}", path);
         let path = path.trim_matches('/');
         if let Some(rest) = path.strip_prefix("./") {
             return self.lookup_mounted_fs(rest, f);
@@ -88,7 +120,7 @@ impl RootDirectory {
 
         // Find the filesystem that has the longest mounted path match
         // TODO: more efficient, e.g. trie
-        for (i, mp) in self.mounts.iter().enumerate() {
+        for (i, mp) in self.mounts.read().iter().enumerate() {
             // skip the first '/'
             if path.starts_with(&mp.path[1..]) && mp.path.len() - 1 > max_len {
                 max_len = mp.path.len() - 1;
@@ -99,8 +131,37 @@ impl RootDirectory {
         if max_len == 0 {
             f(self.main_fs.clone(), path) // not matched any mount point
         } else {
-            f(self.mounts[idx].fs.clone(), &path[max_len..]) // matched at `idx`
+            debug!(
+                "find fs at {:?}, lookup: {}",
+                &path[..max_len],
+                &path[max_len..]
+            );
+            f(self.mounts.read()[idx].fs.clone(), &path[max_len..]) // matched at `idx`
         }
+    }
+
+    fn root_dir() -> Arc<RootDirectory> {
+        ROOT_DIR.get().expect("ROOT_DIR not initialized").clone()
+    }
+
+    pub fn find_mountpoint_and_fs(&self, path: &str) -> AxResult<(String, Arc<dyn VfsOps>)> {
+        let path = axfs_vfs::path::canonicalize(path);
+        let mounts = self.mounts.read();
+
+        // 默认指向 main_fs，挂载点是 "/"
+        let mut best_match = "/";
+        let mut fs = self.main_fs.clone();
+
+        for mp in mounts.iter() {
+            if path == mp.path || path.starts_with(&(mp.path.to_owned() + "/")) {
+                if mp.path.len() > best_match.len() {
+                    best_match = mp.path;
+                    fs = mp.fs.clone();
+                }
+            }
+        }
+
+        Ok((best_match.to_string(), fs))
     }
 }
 
@@ -111,6 +172,9 @@ impl VfsNodeOps for RootDirectory {
         self.main_fs.root_dir().get_attr()
     }
 
+    fn get_attr_x(&self) -> VfsResult<VfsNodeAttrX> {
+        self.main_fs.root_dir().get_attr_x()
+    }
     fn lookup(self: Arc<Self>, path: &str) -> VfsResult<VfsNodeRef> {
         self.lookup_mounted_fs(path, |fs, rest_path| fs.root_dir().lookup(rest_path))
     }
@@ -145,26 +209,30 @@ impl VfsNodeOps for RootDirectory {
         })
     }
 }
-
-pub(crate) fn init_rootfs(disk: crate::dev::Disk) {
+//disk: crate::dev::Disk
+pub(crate) fn init_rootfs(root_disk: crate::dev::Disk) {
     cfg_if::cfg_if! {
         if #[cfg(feature = "myfs")] { // override the default filesystem
-            let main_fs = fs::myfs::new_myfs(disk);
+            let main_fs = fs::myfs::new_myfs(root_disk);
+        } else if #[cfg(feature = "lwext4_rs")] {
+            static EXT4_FS: LazyInit<Arc<fs::lwext4_rust::Ext4FileSystem<Disk>>> = LazyInit::new();
+            EXT4_FS.init_once(Arc::new(fs::lwext4_rust::Ext4FileSystem::new(root_disk, "root", "/")));
+            let main_fs = EXT4_FS.clone();
+            // let dev_fs =  EXT4_FS.clone();
         } else if #[cfg(feature = "fatfs")] {
             static FAT_FS: LazyInit<Arc<fs::fatfs::FatFileSystem>> = LazyInit::new();
-            FAT_FS.init_once(Arc::new(fs::fatfs::FatFileSystem::new(disk)));
+            FAT_FS.init_once(Arc::new(fs::fatfs::FatFileSystem::new(root_disk)));
             FAT_FS.init();
             let main_fs = FAT_FS.clone();
         }
     }
 
-    let mut root_dir = RootDirectory::new(main_fs);
+    let root_dir = RootDirectory::new(main_fs);
 
     #[cfg(feature = "devfs")]
     root_dir
         .mount("/dev", mounts::devfs())
         .expect("failed to mount devfs at /dev");
-
     #[cfg(feature = "ramfs")]
     root_dir
         .mount("/tmp", mounts::ramfs())
@@ -172,9 +240,13 @@ pub(crate) fn init_rootfs(disk: crate::dev::Disk) {
 
     // Mount another ramfs as procfs
     #[cfg(feature = "procfs")]
-    root_dir // should not fail
-        .mount("/proc", mounts::procfs().unwrap())
-        .expect("fail to mount procfs at /proc");
+    {
+        let proc_root = mounts::procfs().unwrap();
+        root_dir // should not fail
+            .mount("/proc", proc_root.clone())
+            .expect("fail to mount procfs at /proc");
+        PROC_ROOT.init_once(proc_root.root_dir_node());
+    }
 
     // Mount another ramfs as sysfs
     #[cfg(feature = "sysfs")]
@@ -183,6 +255,7 @@ pub(crate) fn init_rootfs(disk: crate::dev::Disk) {
         .expect("fail to mount sysfs at /sys");
 
     ROOT_DIR.init_once(Arc::new(root_dir));
+    info!("rootfs initialized");
     CURRENT_DIR.init_new(Mutex::new(ROOT_DIR.clone()));
     CURRENT_DIR_PATH.init_new(Mutex::new("/".into()));
 }
@@ -311,3 +384,62 @@ pub(crate) fn rename(old: &str, new: &str) -> AxResult {
     }
     parent_node_of(None, old).rename(old, new)
 }
+
+// pub fn mount(source: &'static str, target: &'static str, flags: usize) -> AxResult {
+//     let img = crate::api::File::open(source)?;
+//     warn!("mounting {} to {}", source, target);
+//     let fs = fs::lwext4_rust::Ext4FileSystem::new(img);
+//
+//     ROOT_DIR.mount(&target, Arc::new(fs));
+//     Ok(())
+// }
+
+// pub fn mount_dev(_path: &str, mnt: &str, fstype: &str) -> AxResult
+// {
+//     //TODO:cheack _path availble
+//     if _path.is_empty() || !_path.starts_with("/dev/") {
+//         return ax_err!(NotFound);
+//     }
+//
+//     if !mnt.starts_with('/') || mnt.len() < 2 {
+//         return ax_err!(InvalidInput);
+//     }
+//     //TODO:fix lookup the mounted fs
+//     let root = ROOT_DIR.clone();
+//     let devfs = lookup_mounted_fs(root,"/dev");
+//     let dev_path = _path.strip_prefix("/dev/").ok_or(AxError::NotFound)?;
+//     let dev = devfs.root_dir().lookup(dev_path)?;
+//     let disk = Disk::new(dev.get_dev());
+//
+//     let fs:Arc<dyn VfsOps>=match fstype {
+//         "ext4" => Arc::new(Ext4FileSystem::new(disk)),
+//         "vfat" => Arc::new(FatFileSystem::new(disk)),
+//         _ => return ax_err!(UnsupportedFs),
+//     };
+//     //TODO:cheack mnt availble
+//     ROOT_DIR.mount(mnt, fs)?;
+//     Ok(())
+// }
+// pub fn umount_dev(_path: &str) -> AxResult
+// {
+//     //TODO:check _path and drop the mounted fs
+//     ROOT_DIR._umount(_path);
+//     Ok(())
+// }
+
+// fn mount_device(dev_path: &str, mount_path: &str, fstype: &str) -> Result<()> {
+//     let root  = ROOT_DIR.clone();
+//     let dev_node = root.lookup(dev_path)?;
+//     let dev_file = dev_node.clone();
+//
+//     let disk = dev_file.inner.lock().clone(); // 需要 Disk 实现 Clone，或重新构造
+//
+//     let fs: Arc<dyn VfsOps> = match fstype {
+//         "ext4" => Arc::new(Ext4FileSystem::new(disk)),
+//         // 其他文件系统……
+//         _ => return Err(err_invalid()),
+//     };
+//
+//     ROOT_DIR.mount(mount_path, fs)?;
+//     Ok(())
+// }

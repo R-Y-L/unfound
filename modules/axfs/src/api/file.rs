@@ -1,5 +1,8 @@
-use axio::{Result, SeekFrom, prelude::*};
+use alloc::vec::Vec;
+use axfs_vfs::{VfsNodeOps, VfsNodeRef};
+use axio::{Result, SeekFrom, default_read_to_end, prelude::*};
 use core::fmt;
+use lwext4_rust::KernelDevOp;
 
 use crate::fops;
 
@@ -16,17 +19,11 @@ pub struct File {
 }
 
 /// Metadata information about a file.
-pub struct Metadata(fops::FileAttr);
+pub struct Metadata(pub(super) fops::FileAttr);
 
 /// Options and flags which can be used to configure how a file is opened.
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct OpenOptions(fops::OpenOptions);
-
-impl Default for OpenOptions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl OpenOptions {
     /// Creates a blank new set of options ready for configuration.
@@ -73,6 +70,10 @@ impl OpenOptions {
     /// Opens a file at `path` with the options specified by `self`.
     pub fn open(&self, path: &str) -> Result<File> {
         fops::File::open(path, &self.0).map(|inner| File { inner })
+    }
+
+    pub fn open_at(&self, dir: &VfsNodeRef, path: &str) -> Result<File> {
+        fops::File::open_at(dir, path, &self.0).map(|inner| File { inner })
     }
 }
 
@@ -135,6 +136,10 @@ impl File {
         OpenOptions::new().read(true).open(path)
     }
 
+    pub fn open_at(dir: &VfsNodeRef, path: &str) -> Result<Self> {
+        OpenOptions::new().read(true).open_at(dir, path)
+    }
+
     /// Opens a file in write-only mode.
     pub fn create(path: &str) -> Result<Self> {
         OpenOptions::new()
@@ -174,6 +179,14 @@ impl Read for File {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.inner.read(buf)
     }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+        default_read_to_end(
+            self,
+            buf,
+            self.metadata().ok().map(|metadata| metadata.size() as _),
+        )
+    }
 }
 
 impl Write for File {
@@ -189,5 +202,42 @@ impl Write for File {
 impl Seek for File {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         self.inner.seek(pos)
+    }
+}
+
+impl KernelDevOp for File {
+    type DevType = File;
+
+    fn write(dev: &mut Self::DevType, buf: &[u8]) -> core::result::Result<usize, i32> {
+        dev.write(buf).map_err(|_| -1)
+    }
+
+    fn read(dev: &mut Self::DevType, buf: &mut [u8]) -> core::result::Result<usize, i32> {
+        dev.read(buf).map_err(|_| -1)
+    }
+
+    fn seek(dev: &mut Self::DevType, off: i64, whence: i32) -> core::result::Result<i64, i32> {
+        // TODO: whence
+        let seek_from = match whence {
+            0 => SeekFrom::Start(off as u64),
+            1 => SeekFrom::Current(off as i64),
+            2 => SeekFrom::End(off as i64),
+            _ => return Err(-1),
+        };
+        match dev.seek(seek_from) {
+            Ok(pos) => Ok(pos as i64),
+            Err(_) => Err(-1),
+        }
+    }
+
+    fn flush(dev: &mut Self::DevType) -> core::result::Result<usize, i32>
+    where
+        Self: Sized,
+    {
+        // TODO: correct return value
+        match dev.flush() {
+            Ok(_) => Ok(0),
+            Err(_) => Err(0),
+        }
     }
 }
