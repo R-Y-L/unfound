@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use axfs_vfs::{impl_vfs_non_dir_default, VfsNodeAttr, VfsNodeAttrX, VfsNodeOps, VfsResult};
+use axfs_vfs::{impl_vfs_non_dir_default, VfsNodeAttr, VfsNodeAttrX, VfsNodeOps, VfsResult, VfsError};
 use spin::RwLock;
 
 /// 动态文件生成器类型
@@ -69,6 +69,11 @@ impl VfsNodeOps for ProcDynamicFile {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         (self.generator.read())(offset, buf)
+    }
+
+    // Dynamic files are read-only from VFS view.
+    fn write_at(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::PermissionDenied)
     }
 
     impl_vfs_non_dir_default! {}

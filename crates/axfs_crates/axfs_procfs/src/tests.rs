@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axfs_vfs::{VfsError, VfsNodeType, VfsResult};
+use axfs_vfs::{VfsError, VfsNodeType, VfsResult, VfsDirEntry, VfsNodeOps};
 
 use crate::*;
 
@@ -15,9 +15,11 @@ fn test_procfs() {
     root.create_static_file("f1", b"hello").unwrap();
     root.create_static_file("f2", b"world").unwrap();
     root.create_dir("foo").unwrap();
+    // add nested dir for path normalization test
+    root.lookup_dir("foo").unwrap().create_dir("bar").unwrap();
 
     // 测试文件读取（通过VFS接口）
-    let f1 = vroot.lookup("f1").unwrap();
+    let f1 = vroot.clone().lookup("f1").unwrap();
     let mut buf = [0u8; 5];
     assert_eq!(f1.read_at(0, &mut buf).unwrap(), 5);
     assert_eq!(&buf, b"hello");
@@ -25,17 +27,17 @@ fn test_procfs() {
     // 测试目录列表
     let entries = {
         let mut entries = Vec::new();
-        let mut buf = [0u8; 1024];
+        let mut buf: Vec<VfsDirEntry> = (0..16).map(|_| VfsDirEntry::default()).collect();
         let mut offset = 0;
         loop {
             let len = vroot.read_dir(offset, &mut buf).unwrap();
             if len == 0 {
                 break;
             }
-            let dir_entries = &buf[..len];
-            for entry in dir_entries.chunks(32) {
-                let name = &entry[..entry.iter().position(|&b| b == 0).unwrap_or(32)];
-                entries.push(String::from_utf8_lossy(name).into_owned());
+            for ent in &buf[..len] {
+                let name = String::from_utf8_lossy(ent.name_as_bytes()).into_owned();
+                if name == "." || name == ".." { continue; }
+                entries.push(name);
             }
             offset += len;
         }
@@ -46,17 +48,21 @@ fn test_procfs() {
 
     // 测试路径解析
     assert!(Arc::ptr_eq(
-        &vroot.lookup("foo/bar").unwrap(),
-        &vroot.lookup("///foo///bar").unwrap()
+        &vroot.clone().lookup("foo/bar").unwrap(),
+        &vroot.clone().lookup("///foo///bar").unwrap()
     ));
 
     // 测试删除操作（使用内部接口）
+    // remove nested 'bar' created for path test first
+    root.lookup_dir("foo").unwrap().remove_node("bar").unwrap();
     assert_eq!(root.remove_node("f1"), Ok(()));
     assert_eq!(root.remove_node("f2"), Ok(()));
     assert_eq!(root.remove_node("foo"), Ok(()));
 
-    // 验证已清空
-    assert!(root.children.read().is_empty());
+    // 验证已清空（只剩 . 和 ..）
+    let mut dir_buf: Vec<VfsDirEntry> = (0..16).map(|_| VfsDirEntry::default()).collect();
+    let len = root.read_dir(0, &mut dir_buf).unwrap();
+    assert_eq!(len, 2);
 }
 
 #[test]
@@ -66,7 +72,7 @@ fn test_dynamic_file() {
     let vroot = procfs.root_dir();     // VFS只读接口
 
     // 创建动态文件（使用内部接口）
-    let generator = Arc::new(|offset: u64, buf: &mut [u8]| {
+    let generator: Arc<ProcFileGenerator> = Arc::new(|offset: u64, buf: &mut [u8]| {
         let content = b"dynamic content";
         let start = offset as usize;
         if start >= content.len() {
@@ -75,12 +81,12 @@ fn test_dynamic_file() {
         let end = (start + buf.len()).min(content.len());
         buf[..end - start].copy_from_slice(&content[start..end]);
         Ok(end - start)
-    }) as Arc<ProcFileGenerator>;
+    });
 
     root.create_dynamic_file("dyn", generator).unwrap();
 
     // 测试读取（通过VFS接口）
-    let dyn_file = vroot.lookup("dyn").unwrap();
+    let dyn_file = vroot.clone().lookup("dyn").unwrap();
     let mut buf = [0u8; 7];
     assert_eq!(dyn_file.read_at(0, &mut buf).unwrap(), 7);
     assert_eq!(&buf, b"dynamic");
@@ -119,7 +125,7 @@ fn test_error_handling() {
 
     // 非空目录删除（内部接口）
     root.create_dir("dir").unwrap();
-    root.lookup("dir").unwrap()
+    root.lookup_dir("dir").unwrap()
         .create_static_file("f", b"").unwrap();
     assert_eq!(
         root.remove_node("dir").err(),
@@ -128,7 +134,7 @@ fn test_error_handling() {
 
     // 无效路径（VFS接口）
     assert_eq!(
-        vroot.lookup("invalid/path").err(),
+        vroot.clone().lookup("invalid/path").err(),
         Some(VfsError::NotFound)
     );
 }

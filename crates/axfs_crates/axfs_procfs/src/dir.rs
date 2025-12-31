@@ -277,17 +277,8 @@ impl VfsNodeOps for ProcDir {
                 Err(VfsError::NotADirectory)
             }
         } else {
-            match ty {
-                VfsNodeType::Dir => {
-                    self.create_dir(name)?;
-                    Ok(())
-                }
-                VfsNodeType::File => {
-                    self.create_static_file(name, b"")?;
-                    Ok(())
-                }
-                _ => Err(VfsError::Unsupported),
-            }
+            // From VFS perspective, procfs does not allow creating nodes dynamically.
+            Err(VfsError::PermissionDenied)
         }
     }
 
