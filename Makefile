@@ -127,6 +127,11 @@ endif
 
 # Binutils
 CROSS_COMPILE ?= $(ARCH)-linux-musl-
+# Fallback to host toolchain if the configured cross compiler is missing.
+ifeq ($(shell command -v $(CROSS_COMPILE)gcc >/dev/null 2>&1; echo $$?),127)
+  $(warning $(CROSS_COMPILE)gcc not found, using host toolchain)
+  CROSS_COMPILE :=
+endif
 CC := $(CROSS_COMPILE)gcc
 AR := $(CROSS_COMPILE)ar
 RANLIB := $(CROSS_COMPILE)ranlib

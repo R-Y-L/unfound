@@ -16,6 +16,13 @@ impl FileNode {
             content: RwLock::new(Vec::new()),
         }
     }
+
+    /// Create a file node with initial content.
+    pub(super) fn from_vec(content: Vec<u8>) -> Self {
+        Self {
+            content: RwLock::new(content),
+        }
+    }
 }
 
 impl VfsNodeOps for FileNode {

@@ -124,6 +124,53 @@ impl FileLike for EpollInstance {
         })
     }
 
+    fn statx(&self) -> LinuxResult<crate::ctype_my::statx> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn read_at(&self, _buf: &mut [u8], _offset: u64) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn write_at(&self, _buf: &[u8], _offset: u64) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn set_atime(&self, _atime: u32, _atime_n: u32) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn set_mtime(&self, _mtime: u32, _mtime_n: u32) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn fgetxattr(
+        &self,
+        _name: *const core::ffi::c_char,
+        _buf: *mut core::ffi::c_void,
+        _buf_size: usize,
+    ) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn fsetxattr(
+        &self,
+        _name: *const core::ffi::c_char,
+        _value: *mut core::ffi::c_void,
+        _size: usize,
+        _flags: usize,
+    ) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn fremovexattr(&self, _name: *const core::ffi::c_char) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
+    fn flistxattr(&self, _list: *mut core::ffi::c_char, _size: usize) -> LinuxResult<usize> {
+        Err(LinuxError::ENOSYS)
+    }
+
     fn into_any(self: Arc<Self>) -> alloc::sync::Arc<dyn core::any::Any + Send + Sync> {
         self
     }

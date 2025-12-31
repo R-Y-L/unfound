@@ -1,0 +1,10 @@
+# 文件系统测试程序配置（无 lwext4）
+
+# Stack size of each task.
+task-stack-size = 0x40000
+
+# Number of timer ticks per second
+ticks-per-sec = 100
+
+# 文件系统配置 - 禁用 lwext4 以避免 cmake 依赖
+fs = ["devfs", "ramfs", "fatfs", "procfs"]

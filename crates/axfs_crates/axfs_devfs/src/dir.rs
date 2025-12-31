@@ -37,6 +37,16 @@ impl DirNode {
     pub fn add(&self, name: &'static str, node: VfsNodeRef) {
         self.children.write().insert(name, node);
     }
+
+    /// Check whether a node exists in this directory.
+    pub fn exist(&self, name: &str) -> bool {
+        self.children.read().contains_key(name)
+    }
+
+    /// Removing nodes is not allowed on devfs; provide a method for API consistency.
+    pub fn remove_node(&self, _name: &str) -> VfsResult {
+        Err(VfsError::PermissionDenied)
+    }
 }
 
 impl VfsNodeOps for DirNode {
@@ -74,7 +84,7 @@ impl VfsNodeOps for DirNode {
 
     fn read_dir(&self, start_idx: usize, dirents: &mut [VfsDirEntry]) -> VfsResult<usize> {
         let children = self.children.read();
-        let mut children = children.iter().skip(start_idx.max(2) - 2);
+        let mut children = children.iter().skip(start_idx.saturating_sub(2));
         for (i, ent) in dirents.iter_mut().enumerate() {
             match i + start_idx {
                 0 => *ent = VfsDirEntry::new(".", VfsNodeType::Dir),

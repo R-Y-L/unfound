@@ -2,21 +2,8 @@
 resolver = "2"
 
 members = [
-    "modules/axalloc",
-    "modules/axconfig",
-    "modules/axdisplay",
-    "modules/axdriver",
-    "modules/axfs",
-    "modules/axhal",
-    "modules/axlog",
-    "modules/axmm",
-    "modules/axdma",
-    "modules/axnet",
-    "modules/axns",
-    "modules/axruntime",
-    "modules/axsync",
-    "modules/axtask",
-    "modules/axipi",
+   "modules/*",
+    #"crates/*",
 
     "api/axfeat",
     "api/arceos_api",
@@ -30,6 +17,7 @@ members = [
     "examples/httpclient",
     "examples/httpserver",
     "examples/shell",
+    "examples/fs_test_rust",
 ]
 
 [workspace.package]
@@ -55,7 +43,7 @@ axalloc = { path = "modules/axalloc" }
 axconfig = { path = "modules/axconfig" }
 axdisplay = { path = "modules/axdisplay" }
 axdriver = { path = "modules/axdriver" }
-axfs = { path = "modules/axfs" }
+axfs = { path = "modules/axfs", features = ["lwext4_rs"] }
 axhal = { path = "modules/axhal" }
 axlog = { path = "modules/axlog" }
 axmm = { path = "modules/axmm" }
@@ -67,5 +55,10 @@ axtask = { path = "modules/axtask" }
 axdma = { path = "modules/axdma" }
 axipi = { path = "modules/axipi" }
 
+axfs_vfs = { path = "./crates/axfs_crates/axfs_vfs" }
+axfs_devfs = { path = "./crates/axfs_crates/axfs_devfs" }
+axfs_ramfs = { path = "./crates/axfs_crates/axfs_ramfs" }
+axfs_procfs = { path = "./crates/axfs_crates/axfs_procfs" }
+lwext4_rust = { path = "./crates/lwext4_rust", default-features = false }
 [profile.release]
 lto = true

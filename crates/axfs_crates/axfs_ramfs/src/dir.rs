@@ -67,6 +67,16 @@ impl DirNode {
         children.remove(name);
         Ok(())
     }
+
+    /// Create a static file with given content in this directory.
+    pub fn create_static_file(&self, name: &str, content: &[u8]) -> VfsResult {
+        if self.exist(name) {
+            return Err(VfsError::AlreadyExists);
+        }
+        let node: VfsNodeRef = Arc::new(FileNode::from_vec(content.to_vec()));
+        self.children.write().insert(name.into(), node);
+        Ok(())
+    }
 }
 
 impl VfsNodeOps for DirNode {
@@ -103,7 +113,7 @@ impl VfsNodeOps for DirNode {
 
     fn read_dir(&self, start_idx: usize, dirents: &mut [VfsDirEntry]) -> VfsResult<usize> {
         let children = self.children.read();
-        let mut children = children.iter().skip(start_idx.max(2) - 2);
+        let mut children = children.iter().skip(start_idx.saturating_sub(2));
         for (i, ent) in dirents.iter_mut().enumerate() {
             match i + start_idx {
                 0 => *ent = VfsDirEntry::new(".", VfsNodeType::Dir),

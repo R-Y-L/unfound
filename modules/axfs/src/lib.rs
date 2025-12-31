@@ -69,11 +69,8 @@ fn get_device_name(index: u8) -> String {
 /// Initializes filesystems by block devices.
 pub fn init_filesystems(mut blk_devs: AxDeviceContainer<AxBlockDevice>) {
     info!("Initialize filesystems...");
-    let root = blk_devs
-        .first()
-        .expect("No block device found!")
-        .device_name();
-    info!("  use block device 0: {:?} as rootfs", root);
+    let root = blk_devs.iter().next().expect("No block device found!");
+    info!("  use block device 0: {} as rootfs", root.device_name());
     let mut i = 0;
     let mut disks = DISKS.lock();
     while let Some(device) = blk_devs.take_one() {

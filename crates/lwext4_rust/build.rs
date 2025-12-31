@@ -35,7 +35,36 @@ fn main() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let lwext4_lib = &format!("lwext4-{}", arch);
     let lwext4_lib_path = &format!("c/lwext4/lib{}.a", lwext4_lib);
+    let cross_prefix = format!("{arch}-linux-musl-");
+    let cross_cc = format!("{cross_prefix}gcc");
+    let cross_ar = format!("{cross_prefix}ar");
+    let use_cross = Command::new(&cross_cc)
+        .arg("--version")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let (cc, ar) = if use_cross {
+        (cross_cc.clone(), cross_ar)
+    } else {
+        println!(
+            "cargo:warning={} not found, falling back to host compiler",
+            cross_cc
+        );
+        ("gcc".into(), "ar".into())
+    };
     if !Path::new(lwext4_lib_path).exists() {
+        // Check if cmake is available
+        let cmake_check = Command::new("cmake")
+            .args(&["--version"])
+            .status();
+        
+        if cmake_check.is_err() {
+            println!("cargo:warning=cmake not found, skipping lwext4 build");
+            println!("cargo:warning=lwext4 library {} will not be available", lwext4_lib_path);
+            return;
+        }
+        
         let status = Command::new("make")
             .args(&[
                 "musl-generic",
@@ -43,12 +72,13 @@ fn main() {
                 c_path.to_str().expect("invalid path of lwext4"),
             ])
             .arg(&format!("ARCH={}", arch))
+            .env("CC", &cc)
+            .env("AR", &ar)
             .status()
             .expect("failed to execute process: make lwext4");
         assert!(status.success());
 
-        let cc = &format!("{}-linux-musl-gcc", arch);
-        let output = Command::new(cc)
+        let output = Command::new(&cc)
             .args(["-print-sysroot"])
             .output()
             .expect("failed to execute process: gcc -print-sysroot");

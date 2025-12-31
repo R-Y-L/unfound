@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::ffi::c_int;
+use core::ffi::{c_int, c_char};
 
 use axerrno::{LinuxError, LinuxResult};
 use axio::PollState;
@@ -17,6 +17,15 @@ pub trait FileLike: Send + Sync {
     fn read(&self, buf: &mut [u8]) -> LinuxResult<usize>;
     fn write(&self, buf: &[u8]) -> LinuxResult<usize>;
     fn stat(&self) -> LinuxResult<ctypes::stat>;
+    fn statx(&self) -> LinuxResult<crate::ctype_my::statx>;
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> LinuxResult<usize>;
+    fn write_at(&self, buf: &[u8], offset: u64) -> LinuxResult<usize>;
+    fn set_atime(&self, atime: u32, atime_n: u32) -> LinuxResult<usize>;
+    fn set_mtime(&self, mtime: u32, mtime_n: u32) -> LinuxResult<usize>;
+    fn fgetxattr(&self, name: *const c_char, buf: *mut core::ffi::c_void, buf_size: usize) -> LinuxResult<usize>;
+    fn fsetxattr(&self, name: *const c_char, value: *mut core::ffi::c_void, size: usize, flags: usize) -> LinuxResult<usize>;
+    fn fremovexattr(&self, name: *const c_char) -> LinuxResult<usize>;
+    fn flistxattr(&self, list: *mut c_char, size: usize) -> LinuxResult<usize>;
     fn into_any(self: Arc<Self>) -> Arc<dyn core::any::Any + Send + Sync>;
     fn poll(&self) -> LinuxResult<PollState>;
     fn set_nonblocking(&self, nonblocking: bool) -> LinuxResult;

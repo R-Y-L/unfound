@@ -1,0 +1,5 @@
+sysname = "unfound"
+release = "0.1.0"
+version = "0.1.0"
+nodename = "unfound-kernel"
+logo = "unfound_logo.toml"

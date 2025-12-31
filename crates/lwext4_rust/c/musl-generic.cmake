@@ -8,16 +8,50 @@ endif()
 set(CMAKE_SYSTEM_NAME "Linux")
 set(CMAKE_SYSTEM_PROCESSOR ${ARCH})
 
-# Toolchain settings
+# Toolchain settings with host fallback when cross toolchain is missing.
 set(TOOLCHAIN_PREFIX ${ARCH}-linux-musl)
 
-set(CMAKE_C_COMPILER    ${TOOLCHAIN_PREFIX}-gcc)
-set(CMAKE_CXX_COMPILER  ${TOOLCHAIN_PREFIX}-c++)
-set(AS                  ${TOOLCHAIN_PREFIX}-as)
-set(AR                  ${TOOLCHAIN_PREFIX}-ar)
-set(OBJCOPY             ${TOOLCHAIN_PREFIX}-objcopy)
-set(OBJDUMP             ${TOOLCHAIN_PREFIX}-objdump)
-set(SIZE                ${TOOLCHAIN_PREFIX}-size)
+if(DEFINED ENV{CC})
+    set(CMAKE_C_COMPILER    $ENV{CC})
+else()
+    set(CMAKE_C_COMPILER    ${TOOLCHAIN_PREFIX}-gcc)
+endif()
+
+if(DEFINED ENV{CXX})
+    set(CMAKE_CXX_COMPILER  $ENV{CXX})
+else()
+    set(CMAKE_CXX_COMPILER  ${TOOLCHAIN_PREFIX}-c++)
+endif()
+
+if(DEFINED ENV{AS})
+    set(AS                  $ENV{AS})
+else()
+    set(AS                  ${TOOLCHAIN_PREFIX}-as)
+endif()
+
+if(DEFINED ENV{AR})
+    set(AR                  $ENV{AR})
+else()
+    set(AR                  ${TOOLCHAIN_PREFIX}-ar)
+endif()
+
+if(DEFINED ENV{OBJCOPY})
+    set(OBJCOPY             $ENV{OBJCOPY})
+else()
+    set(OBJCOPY             ${TOOLCHAIN_PREFIX}-objcopy)
+endif()
+
+if(DEFINED ENV{OBJDUMP})
+    set(OBJDUMP             $ENV{OBJDUMP})
+else()
+    set(OBJDUMP             ${TOOLCHAIN_PREFIX}-objdump)
+endif()
+
+if(DEFINED ENV{SIZE})
+    set(SIZE                $ENV{SIZE})
+else()
+    set(SIZE                ${TOOLCHAIN_PREFIX}-size)
+endif()
 
 set(LD_FLAGS "-nolibc -nostdlib -static --gc-sections -nostartfiles")
 
