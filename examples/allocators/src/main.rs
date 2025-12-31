@@ -6,7 +6,7 @@ use axstd::println;
 
 use axalloc::GlobalPage;
 
-#[cfg_attr(feature = "axstd", no_mangle)]
+#[cfg_attr(feature = "axstd", unsafe(no_mangle))]
 fn main() {
     #[cfg(feature = "axstd")]
     println!("[allocators] 内存分配测试开始...");

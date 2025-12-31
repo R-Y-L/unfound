@@ -35,44 +35,55 @@ impl AllocatorTester {
         allocator: &A,
         test_case: &AllocatorTestCase,
     ) -> TestResult {
-        let mut total_alloc_time = 0u64;
-        let mut total_dealloc_time = 0u64;
         let mut successful_allocations = 0;
         let mut failed_allocations = 0;
         let mut peak_memory_usage = 0;
 
+        // Record allocated addresses so we can free by address later
+        let mut allocated_addrs: Vec<Option<usize>> = vec![None; test_case.allocation_sizes.len()];
+
         // Allocation phase
         let start_alloc = Instant::now();
-        for &size in &test_case.allocation_sizes {
-            let result = allocator.alloc_pages(size, 4096);
-            if result.is_ok() {
-                successful_allocations += 1;
-                peak_memory_usage += size * 4096;
-            } else {
-                failed_allocations += 1;
+        for (i, &size) in test_case.allocation_sizes.iter().enumerate() {
+            match allocator.alloc_pages(size, 4096) {
+                Ok(addr) => {
+                    successful_allocations += 1;
+                    allocated_addrs[i] = Some(addr);
+                    peak_memory_usage += size * 4096;
+                }
+                Err(_) => {
+                    failed_allocations += 1;
+                }
             }
         }
-        total_alloc_time = start_alloc.elapsed().as_nanos() as u64;
+        let total_alloc_time = start_alloc.elapsed().as_nanos() as u64;
 
-        // Deallocation phase
+        // Deallocation phase - use actual addresses
         let start_dealloc = Instant::now();
-        for &size in &test_case.deallocation_order {
-            allocator.dealloc_pages(size, 1); // Assume deallocating 1 page
+        for &idx in &test_case.deallocation_order {
+            if let Some(Some(addr)) = allocated_addrs.get(idx) {
+                allocator.dealloc_pages(*addr, 1);
+            }
         }
-        total_dealloc_time = start_dealloc.elapsed().as_nanos() as u64;
+        let total_dealloc_time = start_dealloc.elapsed().as_nanos() as u64;
 
-        // Calculate fragmentation
-        let free_list = allocator.free_list_snapshot();
-        let largest_free_block = free_list.iter().flatten().max().unwrap_or(&0);
-        let total_free_memory: usize = free_list.iter().flatten().sum();
-        let fragmentation = 1.0 - (*largest_free_block as f64 / total_free_memory as f64);
+        // Get fragmentation and free memory from allocator's diagnostic stats
+        let (fragmentation, total_free_memory) = allocator.get_stats();
 
         TestResult {
             total_allocations: test_case.allocation_sizes.len(),
             successful_allocations,
             failed_allocations,
-            average_allocation_time_ns: total_alloc_time / test_case.allocation_sizes.len() as u64,
-            average_deallocation_time_ns: total_dealloc_time / test_case.deallocation_order.len() as u64,
+            average_allocation_time_ns: if test_case.allocation_sizes.len() > 0 {
+                total_alloc_time / test_case.allocation_sizes.len() as u64
+            } else {
+                0
+            },
+            average_deallocation_time_ns: if test_case.deallocation_order.len() > 0 {
+                total_dealloc_time / test_case.deallocation_order.len() as u64
+            } else {
+                0
+            },
             fragmentation,
             peak_memory_usage,
             remaining_free_memory: total_free_memory,
