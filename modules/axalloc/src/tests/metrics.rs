@@ -75,6 +75,28 @@ impl BasicPerformanceMetrics {
     }
 }
 
+/// Helper to calculate the slope of a linear regression line for a series of (time, value) points.
+/// The slope represents the rate of change over time.
+fn calculate_linear_regression_slope(points: &[(f64, f64)]) -> f64 {
+    if points.len() < 2 {
+        return 0.0;
+    }
+    let n = points.len() as f64;
+    let sum_x: f64 = points.iter().map(|p| p.0).sum();
+    let sum_y: f64 = points.iter().map(|p| p.1).sum();
+    let sum_xy: f64 = points.iter().map(|p| p.0 * p.1).sum();
+    let sum_xx: f64 = points.iter().map(|p| p.0 * p.0).sum();
+
+    let numerator = n * sum_xy - sum_x * sum_y;
+    let denominator = n * sum_xx - sum_x * sum_x;
+
+    if denominator.abs() < 1e-6 {
+        0.0 // Avoid division by zero if all time points are the same
+    } else {
+        numerator / denominator
+    }
+}
+
 /// Format time in microseconds to appropriate unit (ns, μs, ms).
 fn format_time_us(time_us: f64) -> (f64, &'static str) {
     if time_us < 0.001 {
@@ -89,6 +111,20 @@ fn format_time_us(time_us: f64) -> (f64, &'static str) {
     } else {
         // 1 millisecond or more - show as ms
         (time_us / 1000.0, "ms")
+    }
+}
+
+/// Format time in nanoseconds to appropriate unit string.
+fn format_time_ns(time_ns: f64) -> String {
+    if time_ns < 1000.0 {
+        // Less than 1 microsecond - show as ns
+        format!("{:.1}ns", time_ns)
+    } else if time_ns < 1_000_000.0 {
+        // Less than 1 millisecond - show as μs
+        format!("{:.2}μs", time_ns / 1000.0)
+    } else {
+        // 1 millisecond or more - show as ms
+        format!("{:.2}ms", time_ns / 1_000_000.0)
     }
 }
 
@@ -273,28 +309,65 @@ impl StabilityMetrics {
             report.push_str(&format!("  - 运行{:.0}h：{:.1}倍（4线程 vs 单线程）\n", time, ratio));
         }
         
-        report.push_str("- 性能衰减率：\n");
-        if !self.alloc_time_degradation.is_empty() {
+        report.push_str("- 性能衰减率（线性回归斜率）：\n");
+        if self.alloc_time_degradation.len() >= 2 {
+            let slope = calculate_linear_regression_slope(&self.alloc_time_degradation);
             let first = self.alloc_time_degradation.first().unwrap();
             let last = self.alloc_time_degradation.last().unwrap();
-            let degradation = ((last.1 - first.1) / first.1) * 100.0;
+            
+            // Slope is in ns/hour. Positive means degradation.
+            let degradation_rate_ns_per_hr = slope;
+            
             report.push_str(&format!(
-                "  - 平均分配时间衰减：运行{:.0}h({:.2}ms) → 运行{:.0}h({:.2}ms)（衰减{:.0}%）\n",
-                first.0, first.1 / 1000.0,
-                last.0, last.1 / 1000.0,
-                degradation
+                "  - 平均分配时间：从 {} (t=0) 到 {} (t={:.0})，斜率 = {:.1} ns/小时\n",
+                format_time_ns(first.1),
+                format_time_ns(last.1),
+                last.0,
+                degradation_rate_ns_per_hr
             ));
+            if degradation_rate_ns_per_hr > 0.0 {
+                report.push_str("    [趋势：性能随时间衰减]\n");
+            } else if degradation_rate_ns_per_hr < -0.1 {
+                report.push_str("    [趋势：性能随时间改善]\n");
+            } else {
+                report.push_str("    [趋势：性能稳定]\n");
+            }
         }
-        if !self.throughput_over_time.is_empty() {
+        
+        if self.throughput_over_time.len() >= 2 {
+            let slope = calculate_linear_regression_slope(&self.throughput_over_time);
             let first = self.throughput_over_time.first().unwrap();
             let last = self.throughput_over_time.last().unwrap();
-            let degradation = ((first.1 - last.1) / first.1) * 100.0;
+            
+            // Slope is in ops/sec per hour. Negative means degradation.
+            let degradation_rate_ops_per_hr = slope;
+            
+            // Format throughput with K/M suffix
+            let format_throughput = |ops: f64| -> String {
+                if ops >= 1_000_000.0 {
+                    format!("{:.2}M", ops / 1_000_000.0)
+                } else if ops >= 1_000.0 {
+                    format!("{:.1}K", ops / 1_000.0)
+                } else {
+                    format!("{:.0}", ops)
+                }
+            };
+            
             report.push_str(&format!(
-                "  - 吞吐量衰减：运行{:.0}h({:.0}次/秒) → 运行{:.0}h({:.0}次/秒)（衰减{:.0}%）",
-                first.0, first.1,
-                last.0, last.1,
-                degradation
+                "  - 吞吐量：从 {}次/秒 (t=0) 到 {}次/秒 (t={:.0})，斜率 = {:.0} ops/sec/小时",
+                format_throughput(first.1),
+                format_throughput(last.1),
+                last.0,
+                degradation_rate_ops_per_hr
             ));
+            
+            if degradation_rate_ops_per_hr < -100.0 {
+                report.push_str("\n    [趋势：吞吐量随时间下降]");
+            } else if degradation_rate_ops_per_hr > 100.0 {
+                report.push_str("\n    [趋势：吞吐量随时间上升]");
+            } else {
+                report.push_str("\n    [趋势：吞吐量稳定]");
+            }
         }
         
         report

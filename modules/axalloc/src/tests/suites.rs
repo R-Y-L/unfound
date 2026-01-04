@@ -480,44 +480,110 @@ pub fn run_stability_test<A: PageAllocator + ?Sized>(
     metrics.memory_leak_rate_bps = leaked_bytes as f64 / simulated_seconds;
     
     // Performance degradation tracking over simulated time
-    for time_hours in &config.measurement_times_hours {
-        // Measure allocation time at this point
-        let mut times: Vec<u64> = Vec::new();
-        for _ in 0..100 {
+    // First, build up fragmentation state for each time point
+    for time_hours in config.measurement_times_hours.iter() {
+        // Build up fragmentation proportional to time
+        let frag_ops = (*time_hours * 100.0) as usize;
+        let mut frag_allocs: Vec<(usize, usize)> = Vec::new();
+        for _ in 0..frag_ops {
+            let size = 1 + rng.next_usize(32);
+            if let Ok(addr) = allocator.alloc_pages(size, PAGE_SIZE) {
+                frag_allocs.push((addr, size));
+            }
+            if !frag_allocs.is_empty() && rng.next_f64() < 0.7 {
+                let i = rng.next_usize(frag_allocs.len());
+                let (a, s) = frag_allocs.swap_remove(i);
+                allocator.dealloc_pages(a, s);
+            }
+        }
+        
+        // Measure allocation time with nanosecond precision
+        // Use more iterations for stable measurement
+        let mut times_ns: Vec<u64> = Vec::new();
+        for _ in 0..500 {
             let start = Instant::now();
             if let Ok(addr) = allocator.alloc_pages(4, PAGE_SIZE) {
-                let elapsed = start.elapsed().as_nanos() as u64;
-                times.push(elapsed);
+                let elapsed_ns = start.elapsed().as_nanos() as u64;
+                times_ns.push(elapsed_ns);
                 allocator.dealloc_pages(addr, 4);
             }
         }
-        if !times.is_empty() {
-            let avg: u64 = times.iter().sum::<u64>() / times.len() as u64;
-            metrics.alloc_time_degradation.push((*time_hours, avg as f64 / 1000.0));
+        if !times_ns.is_empty() {
+            times_ns.sort();
+            // Use median for robustness against outliers
+            let median_ns = times_ns[times_ns.len() / 2];
+            // Store in nanoseconds (will be converted to appropriate unit in display)
+            metrics.alloc_time_degradation.push((*time_hours, median_ns as f64));
         }
         
-        // Measure throughput
+        // Measure throughput (alloc + dealloc pairs)
+        let iterations = 2000;
         let start = Instant::now();
-        let mut count = 0;
-        for _ in 0..1000 {
+        let mut success_count = 0;
+        for _ in 0..iterations {
             if let Ok(addr) = allocator.alloc_pages(1, PAGE_SIZE) {
                 allocator.dealloc_pages(addr, 1);
-                count += 2; // alloc + dealloc
+                success_count += 1;
             }
         }
-        let elapsed = start.elapsed().as_secs_f64();
-        if elapsed > 0.0 {
-            metrics.throughput_over_time.push((*time_hours, count as f64 / elapsed));
+        let elapsed_ns = start.elapsed().as_nanos() as u64;
+        if elapsed_ns > 0 {
+            // ops = alloc + dealloc = 2 * success_count
+            let ops = success_count * 2;
+            let ops_per_sec = (ops as f64 * 1_000_000_000.0) / elapsed_ns as f64;
+            metrics.throughput_over_time.push((*time_hours, ops_per_sec));
+        }
+        
+        // Clean up fragmentation state
+        for (a, s) in frag_allocs {
+            allocator.dealloc_pages(a, s);
         }
     }
     
-    // Multi-thread contention - simulated by sequential with overhead factor
-    // (Real multi-thread test would require threading support)
+    // Multi-thread contention measurement
+    // Since we can't easily spawn threads in no_std, measure lock acquisition overhead
+    // by comparing performance with and without lock contention simulation
     for time_hours in &config.measurement_times_hours {
-        // Simulate increasing contention over time
-        let base_overhead = 1.2;
-        let time_factor = 1.0 + (*time_hours / 24.0) * 0.2;
-        metrics.contention_ratios.push((*time_hours, base_overhead * time_factor));
+        // Measure baseline: single sequential access
+        let mut baseline_times: Vec<u64> = Vec::new();
+        for _ in 0..200 {
+            let start = Instant::now();
+            if let Ok(addr) = allocator.alloc_pages(1, PAGE_SIZE) {
+                let t = start.elapsed().as_nanos() as u64;
+                baseline_times.push(t);
+                allocator.dealloc_pages(addr, 1);
+            }
+        }
+        
+        // Measure with interleaved operations (simulates contention pattern)
+        // Multiple rapid alloc/dealloc cycles stress the lock
+        let mut contended_times: Vec<u64> = Vec::new();
+        for _ in 0..200 {
+            // Interleave with different sizes to stress locking
+            let _ = allocator.alloc_pages(2, PAGE_SIZE);
+            let start = Instant::now();
+            if let Ok(addr) = allocator.alloc_pages(1, PAGE_SIZE) {
+                let t = start.elapsed().as_nanos() as u64;
+                contended_times.push(t);
+                allocator.dealloc_pages(addr, 1);
+            }
+        }
+        
+        if !baseline_times.is_empty() && !contended_times.is_empty() {
+            let baseline_avg: u64 = baseline_times.iter().sum::<u64>() / baseline_times.len() as u64;
+            let contended_avg: u64 = contended_times.iter().sum::<u64>() / contended_times.len() as u64;
+            // Ratio: how much slower under contention
+            let ratio = if baseline_avg > 0 {
+                contended_avg as f64 / baseline_avg as f64
+            } else {
+                1.0
+            };
+            // Ensure ratio is at least 1.0 (contention shouldn't make things faster)
+            let clamped_ratio = ratio.max(1.0);
+            metrics.contention_ratios.push((*time_hours, clamped_ratio));
+        } else {
+            metrics.contention_ratios.push((*time_hours, 1.0));
+        }
     }
     
     metrics
