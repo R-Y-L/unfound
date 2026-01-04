@@ -1,21 +1,43 @@
 # Unfound
 
-Unfound 是 ArceOS 模块化微内核的个人定制分支，保留上游架构并作为调度器、驱动和平台适配的实验沙箱。本分支演进较快，版本间可能出现不兼容变更。
+基于 ArceOS 使用 Rust 开发的操作系统，具备良好的模块化设计与用户态支持能力。
+
+## 项目简介
+![alt text](6682d6b984b4a175591c9534935e62c7.png)
+本项目是基于 ArceOS 开发的操作系统，采用 Rust 语言实现。系统继承了 ArceOS 的模块化架构设计，并在进程管理、内存管理、文件系统方面进行了重要改进，主要包括：
 
 内存管理工作（本分支重点）：
-- 调整物理页分配器与伙伴系统接口，澄清与硬件无关的内存抽象。
-- 引入按域隔离（内核/用户/设备）的虚拟地址空间布局，支撑安全性实验。
-- 增强内存诊断日志与统计，便于问题复现与性能画像。
-- 补充并调优页面回收策略，评估吞吐与尾延迟表现。
+- 多分配器框架（Multi-Allocator Framework）
+  - 以 PageAllocator trait 抽象接口统一分配器，实现 Buddy/Bitmap/Hybrid 等策略
+  - 支持运行时切换与对比测试，便于逐步迁移与回归验证
 
-Memory management focus (EN): refining allocator/buddy interfaces, per-domain VA layouts, richer MM telemetry, and reclamation tuning.
+- 实验环境与数据具象化
+  - 可配置内存池大小、负载模型、长时运行（1h/6h/24h）等实验维度
+  - 统一采集成功率、延迟分布（P50/P99）、吞吐量、外/内部碎片率等指标
+  - 生成标准化报告与分配器对比视图，便于深度理解分配策略以及问题定位与优化迭代
+
+- 测试模块
+  - 基础性能、碎片、稳定性、时间维度、内核 no_std 适配测试套件
+  - 同时支持 CLI 与程序化调用，提供 small/medium/large 预设与自定义配置
+
+- 可扩展性
+  - 模块化测试框架与 feature gating，便于新增/替换分配策略
+  - 通过 trait 接口快速接入新分配器，统计接口与日志强度可调
+
+
+文件系统（fs分支）：
+- 统一文件接口：为不同文件系统类型提供统一的抽象接口
+- 动态挂载机制：支持运行时动态挂载和卸载文件系统
+
+
 
 ## 支持的目标平台
 - 架构：x86_64、aarch64、riscv64、loongarch64
 - 默认平台：QEMU pc-q35（x86_64）、QEMU virt（aarch64/riscv64/loongarch64）
 
-## 项目目录结构
+## 项目目录结构(本分支)
 - modules：内核组件（内存、调度、驱动、网络、文件系统、日志等）
+  - axalloc：内存分配器框架与测试（PageAllocator、Buddy/Bitmap/Hybrid、tests）
 - api：应用接口（axfeat、arceos_api、arceos_posix_api）
 - ulib：用户态库（axstd、axlibc）
 - examples：子系统示例与冒烟测试
@@ -40,34 +62,15 @@ Memory management focus (EN): refining allocator/buddy interfaces, per-domain VA
 	```
 - 可选（C 应用）：`sudo apt install libclang-dev`，并安装 aarch64/riscv64/x86_64/loongarch64 的 musl 交叉工具链，将其 bin 目录加入 PATH。
 
-### 编译并运行示例
+### 运行内存分配器测试
 ```bash
-# 在仓库根目录
-make A=examples/helloworld ARCH=aarch64 LOG=info run
+# 进入分配器测试模块目录
+cd modules/axalloc
+# 运行 Buddy 分配器的全量测试套件
+cargo run --bin allocator_test --features "buddy std" all
+# 更多特性或对比运行请参考测试文档
 ```
-
-常用参数：`SMP=<cpus>` 设置核数；`NET=y` 启用 virtio-net；`BLK=y` 启用 virtio-blk；`GRAPHIC=y` 启用 virtio-gpu。完整列表见 Makefile。
-
-### 构建自定义 Rust 应用
-1. 创建 `no_std`、`no_main` 包，添加依赖：
-	 ```toml
-	 [dependencies]
-	 axstd = { path = "/path/to/unfound/ulib/axstd", features = ["..."] }
-	 ```
-2. 用 `#[unsafe(no_mangle)]` 标记入口，按 `axstd`（类似 Rust `std`）编程。
-3. 在本仓库环境构建运行：
-	 ```bash
-	 make -C /path/to/unfound A=$(pwd) ARCH=<arch> run
-	 ```
-
-### 构建自定义 C 应用
-1. 在应用目录添加 `axbuild.mk`（列出对象文件）和可选 `features.txt`（每行一个功能）。
-2. 使用同样的 make 命令，令 `A` 指向应用目录。
-
-## 其他说明
-- 默认配置输出到 `.axconfig.toml`，可用 `OUT_CONFIG` 重定向。
-- 构建产物位于 `target/`，可用 `TARGET_DIR` 覆盖。
-- 本仓库紧跟上游 ArceOS，同步补丁直接提交于此。
+详细说明请参见：modules/axalloc/src/tests/README.md
 
 ## 开源协议
 与上游一致：GPL-3.0-or-later、Apache-2.0、MulanPSL-2.0。
