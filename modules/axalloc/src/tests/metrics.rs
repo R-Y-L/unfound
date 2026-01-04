@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 
@@ -153,30 +153,45 @@ impl FragmentationMetrics {
         let mut report = String::from("【碎片与开销（时间维度）】\n- 外部碎片率：\n");
         for snap in &self.snapshots {
             report.push_str(&format!(
-                "  - 运行{:.0}h：{:.1}%（总空闲{:.1}MB，最大连续{:.1}MB）\n",
+                "  - 运行{:.0}h：{:.1}%（总空闲{}，最大连续{}）\n",
                 snap.time_hours,
                 snap.external_fragmentation_rate,
-                snap.total_free_bytes as f64 / (1024.0 * 1024.0),
-                snap.max_contiguous_free_bytes as f64 / (1024.0 * 1024.0)
+                format_bytes(snap.total_free_bytes),
+                format_bytes(snap.max_contiguous_free_bytes)
             ));
         }
         report.push_str("- 内部碎片率：\n");
         for snap in &self.snapshots {
             report.push_str(&format!(
-                "  - 运行{:.0}h：{:.1}%（已分配{:.1}MB，浪费{:.1}MB）\n",
+                "  - 运行{:.0}h：{:.1}%（已分配{}，浪费{}）\n",
                 snap.time_hours,
                 snap.internal_fragmentation_rate,
-                snap.total_allocated_bytes as f64 / (1024.0 * 1024.0),
-                snap.internal_waste_bytes as f64 / (1024.0 * 1024.0)
+                format_bytes(snap.total_allocated_bytes),
+                format_bytes(snap.internal_waste_bytes)
             ));
         }
         report.push_str(&format!(
-            "- 元数据占用：{}KB（总内存{:.1}GB，占比{:.4}%）",
-            self.metadata_overhead_bytes / 1024,
-            self.total_memory_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            "- 元数据占用：{}（总内存{}，占比{:.4}%）",
+            format_bytes(self.metadata_overhead_bytes),
+            format_bytes(self.total_memory_bytes),
             self.metadata_overhead_percentage()
         ));
         report
+    }
+}
+
+/// Format bytes to appropriate unit (B, KB, MB, GB).
+fn format_bytes(bytes: usize) -> String {
+    if bytes == 0 {
+        "0B".to_string()
+    } else if bytes < 1024 {
+        format!("{}B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2}GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }
 

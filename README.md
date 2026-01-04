@@ -1,9 +1,14 @@
-# Unfound
+# UnfoundOS 
+UnfoundOS是我们参加2025年全国大学生计算机系统能力大赛-操作系统设计赛-华东区域赛-操作系统原理赛道的作品，是基于 ArceOS 使用 Rust 开发的操作系统，具备良好的模块化设计与用户态支持能力。
 
-基于 ArceOS 使用 Rust 开发的操作系统，具备良好的模块化设计与用户态支持能力。
+![alt text](image.png)
+
 
 ## 项目简介
-![alt text](6682d6b984b4a175591c9534935e62c7.png)
+整体架构图如下
+
+![alt text](6682d6b984b4a175591c9534935e62c7.png)  
+
 本项目是基于 ArceOS 开发的操作系统，采用 Rust 语言实现。系统继承了 ArceOS 的模块化架构设计，并在进程管理、内存管理、文件系统方面进行了重要改进，主要包括：
 
 内存管理工作（本分支重点）：
@@ -71,6 +76,11 @@ cargo run --bin allocator_test --features "buddy std" all
 # 更多特性或对比运行请参考测试文档
 ```
 详细说明请参见：modules/axalloc/src/tests/README.md
+
+## 致谢
+[ArceOS](https://github.com/rcore-os/arceos)  
+[Rust](https://www.rust-lang.org/)  
+[StarryX](https://gitlab.eduxiji.net/educg-group-32146-2710490/T202510336995486-1803.git)
 
 ## 开源协议
 与上游一致：GPL-3.0-or-later、Apache-2.0、MulanPSL-2.0。

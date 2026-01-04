@@ -165,16 +165,36 @@ pub fn run_basic_performance_test<A: PageAllocator + ?Sized>(
 fn collect_fragmentation_snapshot<A: PageAllocator + ?Sized>(
     allocator: &A,
     time_hours: f64,
-    allocated_actual: usize,
-    wasted: usize,
+    total_memory: usize,
+    tracked_requested: usize,  // 测试跟踪的请求字节数
+    tracked_actual: usize,     // 测试跟踪的实际分配字节数
 ) -> FragmentationSnapshot {
     let (frag_rate, total_free) = allocator.get_stats();
     
-    // Estimate max contiguous from fragmentation rate
-    let max_contiguous = if frag_rate > 0.0 && frag_rate < 1.0 {
+    // Calculate max contiguous from fragmentation rate
+    // frag_rate = 1 - (max_contiguous / total_free)
+    // So: max_contiguous = (1 - frag_rate) * total_free
+    let max_contiguous = if total_free > 0 {
         ((1.0 - frag_rate) * total_free as f64) as usize
     } else {
-        total_free
+        0
+    };
+    
+    // Use actual allocated from allocator stats: total_memory - free
+    let actual_allocated = if total_memory > total_free {
+        total_memory - total_free
+    } else {
+        0
+    };
+    
+    // Internal fragmentation = allocated_bytes - requested_bytes
+    // tracked_actual: actual bytes allocated (pages * PAGE_SIZE)
+    // tracked_requested: original user-requested bytes
+    // The waste is the difference between what we allocated and what was requested
+    let internal_waste = if tracked_actual > tracked_requested {
+        tracked_actual - tracked_requested
+    } else {
+        0
     };
     
     let mut snapshot = FragmentationSnapshot {
@@ -182,13 +202,15 @@ fn collect_fragmentation_snapshot<A: PageAllocator + ?Sized>(
         total_free_bytes: total_free,
         max_contiguous_free_bytes: max_contiguous,
         external_fragmentation_rate: frag_rate * 100.0,
-        total_allocated_bytes: allocated_actual,
-        internal_waste_bytes: wasted,
+        total_allocated_bytes: actual_allocated,  // 使用分配器报告的实际已分配
+        internal_waste_bytes: internal_waste,
         internal_fragmentation_rate: 0.0,
     };
     
-    if allocated_actual > 0 {
-        snapshot.internal_fragmentation_rate = (wasted as f64 / allocated_actual as f64) * 100.0;
+    // Calculate internal fragmentation rate = waste / allocated
+    // Use tracked_actual as denominator since that's what we're measuring waste against
+    if tracked_actual > 0 {
+        snapshot.internal_fragmentation_rate = (internal_waste as f64 / tracked_actual as f64) * 100.0;
     }
     
     snapshot
@@ -203,25 +225,29 @@ pub fn run_fragmentation_test<A: PageAllocator + ?Sized>(
     let mut metrics = FragmentationMetrics::new();
     metrics.total_memory_bytes = total_memory;
     
+    let allocator_name = allocator.name();
+    let is_buddy = allocator_name == "buddy";
+    
     let mut rng = SimpleRng::new(config.random_seed);
-    let mut allocated: Vec<(usize, usize, usize)> = Vec::new(); // (addr, actual_size, requested_size)
-    let mut total_allocated = 0usize;
-    let mut total_wasted = 0usize;
+    // Track: (addr, requested_bytes, allocated_bytes, pages_for_dealloc)
+    let mut allocated: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut total_requested = 0usize;  // 用户真正请求的字节数
+    let mut total_actual = 0usize;     // 实际分配的字节数（含所有层次的浪费）
     
     // Calculate total weight for size distribution
     let total_weight: usize = config.size_distribution.iter().map(|(_, w)| *w).sum();
     
-    // Helper to select size based on distribution
-    let select_size = |rng: &mut SimpleRng| -> usize {
+    // Helper to select size (now returns bytes, not pages)
+    let select_size_bytes = |rng: &mut SimpleRng| -> usize {
         let r = rng.next_usize(total_weight);
         let mut cumulative = 0;
-        for (size, weight) in &config.size_distribution {
+        for (size_bytes, weight) in &config.size_distribution {
             cumulative += weight;
             if r < cumulative {
-                return *size;
+                return *size_bytes;
             }
         }
-        config.size_distribution.last().map(|(s, _)| *s).unwrap_or(1)
+        config.size_distribution.last().map(|(s, _)| *s).unwrap_or(4096)
     };
     
     let mut measurement_idx = 0;
@@ -229,7 +255,7 @@ pub fn run_fragmentation_test<A: PageAllocator + ?Sized>(
     // Initial snapshot
     if !config.measurement_times_hours.is_empty() && config.measurement_times_hours[0] == 0.0 {
         metrics.snapshots.push(collect_fragmentation_snapshot(
-            allocator, 0.0, total_allocated, total_wasted
+            allocator, 0.0, total_memory, total_requested, total_actual
         ));
         measurement_idx = 1;
     }
@@ -246,23 +272,33 @@ pub fn run_fragmentation_test<A: PageAllocator + ?Sized>(
             if should_dealloc {
                 // Deallocate a random block
                 let idx = rng.next_usize(allocated.len());
-                let (addr, actual_size, requested_size) = allocated.swap_remove(idx);
-                allocator.dealloc_pages(addr, requested_size);
-                total_allocated -= actual_size;
-                total_wasted -= actual_size - (requested_size * PAGE_SIZE);
+                let (addr, req_bytes, alloc_bytes, pages_to_dealloc) = allocated.swap_remove(idx);
+                allocator.dealloc_pages(addr, pages_to_dealloc);
+                total_requested -= req_bytes;
+                total_actual -= alloc_bytes;
             } else {
-                // Allocate
-                let size_pages = select_size(&mut rng);
-                if let Ok(addr) = allocator.alloc_pages(size_pages, PAGE_SIZE) {
-                    // Actual allocated is rounded to power of 2 for buddy
-                    let actual_pages = size_pages.next_power_of_two();
+                // Allocate: start from byte-level request
+                let requested_bytes = select_size_bytes(&mut rng);
+                
+                // Step 1: Byte→Page rounding (all allocators have this waste)
+                let pages_needed = (requested_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+                
+                if let Ok(addr) = allocator.alloc_pages(pages_needed, PAGE_SIZE) {
+                    // Step 2: Page→Power-of-2 rounding (Buddy only)
+                    // Buddy allocates next_power_of_two(pages_needed) internally
+                    // Bitmap/Hybrid allocate exactly pages_needed
+                    let actual_pages = if is_buddy {
+                        pages_needed.next_power_of_two()
+                    } else {
+                        pages_needed
+                    };
                     let actual_bytes = actual_pages * PAGE_SIZE;
-                    let requested_bytes = size_pages * PAGE_SIZE;
-                    let waste = actual_bytes - requested_bytes;
                     
-                    allocated.push((addr, actual_bytes, size_pages));
-                    total_allocated += actual_bytes;
-                    total_wasted += waste;
+                    // For dealloc, we pass the original requested pages (not rounded)
+                    // because that's what the allocator tracks in alloc_map
+                    allocated.push((addr, requested_bytes, actual_bytes, pages_needed));
+                    total_requested += requested_bytes;
+                    total_actual += actual_bytes;
                 }
             }
         }
@@ -274,7 +310,7 @@ pub fn run_fragmentation_test<A: PageAllocator + ?Sized>(
             let target_time = config.measurement_times_hours[measurement_idx];
             if current_time >= target_time {
                 metrics.snapshots.push(collect_fragmentation_snapshot(
-                    allocator, target_time, total_allocated, total_wasted
+                    allocator, target_time, total_memory, total_requested, total_actual
                 ));
                 measurement_idx += 1;
             } else {
@@ -287,15 +323,66 @@ pub fn run_fragmentation_test<A: PageAllocator + ?Sized>(
         }
     }
     
-    // Estimate metadata overhead (rough heuristic)
-    // For buddy: ~8 bytes per tracked block
-    // For bitmap: bits per page
+    // Calculate metadata overhead based on allocator type
+    // Only include allocator's own management structures, NOT per-allocation tracking
     let estimated_pages = total_memory / PAGE_SIZE;
-    metrics.metadata_overhead_bytes = estimated_pages / 8 + 1024; // bitmap + bookkeeping
+    metrics.metadata_overhead_bytes = match allocator_name {
+        "bitmap" => {
+            // Bitmap allocator metadata:
+            // - Bitmap: 1 bit per page = total_pages / 8 bytes
+            // - SpinNoIrq wrapper: ~8 bytes
+            // - BitmapPageAllocator struct fields: ~32 bytes
+            // For 256MB = 65536 pages: 65536/8 = 8192 bytes ≈ 8KB
+            let bitmap_bytes = estimated_pages / 8;
+            bitmap_bytes + 40  // struct overhead
+        }
+        "buddy" => {
+            // Buddy allocator metadata:
+            // - free_lists: Vec<Vec<usize>> with max_order entries
+            //   Each Vec has ~24 bytes header + entries (variable)
+            //   max_order = log2(total_pages) ≈ 16 for 256MB
+            // - alloc_map: BTreeMap<usize, (usize, usize)>
+            //   BTreeMap has ~48 bytes base + ~64 bytes per node (each node holds multiple entries)
+            //   Estimate: ~48 base + (active_allocs / 8) * 64 for internal nodes
+            // - SpinNoIrq wrappers: ~8 bytes each × 3
+            // - Struct fields: ~40 bytes
+            // For 256MB with typical 1000 active allocations:
+            //   free_lists: 16 orders × 24 = 384 bytes (headers only, entries are in pool)
+            //   alloc_map: 48 + (1000/8)*64 ≈ 8KB (but this varies with usage)
+            // Conservative static estimate (excluding per-allocation overhead):
+            let max_order = (estimated_pages as f64).log2().ceil() as usize;
+            let free_list_headers = max_order * 24;
+            let btree_base = 48;
+            let struct_overhead = 64;
+            free_list_headers + btree_base + struct_overhead  // ≈ 500 bytes for 256MB
+        }
+        "hybrid" => {
+            // Hybrid allocator metadata:
+            // - bitmap: Vec<u8> with total_pages / 8 bytes
+            // - free_list: BTreeMap<usize, FreeBlockInfo> - for large blocks only
+            //   FreeBlockInfo is 8 bytes, BTreeMap node ~64 bytes
+            //   Typically few large blocks, estimate ~10-20 entries max
+            // - alloc_map: BTreeMap<usize, (usize, bool)> - same as buddy
+            // - SpinNoIrq wrappers: ~8 bytes × 4
+            // - Struct fields: ~48 bytes
+            // For 256MB:
+            //   bitmap: 8192 bytes
+            //   free_list: 48 base + small overhead ≈ 200 bytes
+            //   struct: 80 bytes
+            let bitmap_bytes = estimated_pages / 8;
+            let btree_base = 48 * 2;  // two BTreeMaps
+            let struct_overhead = 80;
+            bitmap_bytes + btree_base + struct_overhead  // ≈ 8.4KB for 256MB
+        }
+        _ => {
+            // Default: bitmap-like estimate
+            estimated_pages / 8 + 128
+        }
+    };
     
     // Clean up
-    for (addr, _, size) in allocated {
-        allocator.dealloc_pages(addr, size);
+    for (addr, _req, _alloc, pages) in allocated {
+        allocator.dealloc_pages(addr, pages);
     }
     
     metrics

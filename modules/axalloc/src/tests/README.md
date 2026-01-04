@@ -51,7 +51,7 @@ plaintext
   fragmentation        运行碎片测试
   stability            运行稳定性测试
   time-dimension       运行时间维度测试
-  legacy               运行遗留负载测试
+  legacy               运行初始负载测试
 
 可选参数:
   -a, --allocator NAME   指定分配器（buddy/bitmap/hybrid）
@@ -298,8 +298,8 @@ src/tests/
 ├── suites.rs           # 核心测试套件实现
 ├── time_dimension.rs   # 长期运行的时间维度测试
 ├── kernel_tests.rs     # 适配 no_std 的内核环境测试
-├── allocator_tester.rs # 遗留测试器（向下兼容）
-└── workloads.rs        # 遗留测试负载（向下兼容）
+├── allocator_tester.rs # 初始测试器（向下兼容）
+└── workloads.rs        # 初始测试负载（向下兼容）
 ```
 
 ## 八、编译特性（Features）

@@ -91,12 +91,23 @@ impl Default for FragmentationConfig {
             ops_per_hour: 10000,
             dealloc_ratio: 0.7,
             random_seed: 12345,
+            // Byte-level request sizes (in bytes) to simulate realistic internal fragmentation
+            // Internal fragmentation = (allocated_bytes - requested_bytes) / allocated_bytes
+            // Two sources of waste:
+            //   1. Byte→Page rounding: all allocators (request 5KB → allocate 8KB = 2 pages)
+            //   2. Page→Power-of-2 rounding: Buddy only (request 3 pages → allocate 4 pages)
+            // These are byte sizes that will be rounded up to pages
             size_distribution: vec![
-                (1, 50),    // 50% single page
-                (4, 20),    // 20% 4 pages (16KB)
-                (16, 15),   // 15% 16 pages (64KB)
-                (64, 10),   // 10% 64 pages (256KB)
-                (256, 5),   // 5% 256 pages (1MB)
+                (1024, 15),      // 1KB → 1 page (4KB), 75% waste
+                (3500, 15),      // 3.5KB → 1 page (4KB), 12.5% waste
+                (5000, 15),      // 5KB → 2 pages (8KB), 37.5% waste
+                (13000, 12),     // 13KB → 4 pages (16KB), 18.75% waste
+                (30000, 12),     // 30KB → 8 pages (32KB), 6.25% waste
+                (50000, 10),     // 50KB → 13 pages, Buddy→16 pages
+                (100000, 10),    // 100KB → 25 pages, Buddy→32 pages
+                (200000, 6),     // 200KB → 49 pages, Buddy→64 pages
+                (500000, 5),     // 500KB → 122 pages, Buddy→128 pages
+
             ],
         }
     }
@@ -114,10 +125,12 @@ impl FragmentationConfig {
             ops_per_hour: 1000,
             dealloc_ratio: 0.7,
             random_seed: 12345,
+            // Use non-power-of-2 sizes
             size_distribution: vec![
-                (1, 60),
-                (16, 30),
-                (64, 10),
+                (1, 40),    // 1 page
+                (3, 25),    // 3 pages → 4 pages
+                (7, 20),    // 7 pages → 8 pages
+                (15, 15),   // 15 pages → 16 pages
             ],
         }
     }
