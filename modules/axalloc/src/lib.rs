@@ -14,6 +14,10 @@ extern crate alloc;
 mod page;
 pub mod allocators;
 
+// Test framework - conditionally compiled for std environments
+#[cfg(feature = "std")]
+pub mod tests;
+
 use allocator::{AllocResult, BaseAllocator, BitmapPageAllocator, ByteAllocator, PageAllocator};
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::NonNull;

@@ -3,6 +3,9 @@
 //! This module provides predefined workloads for testing allocators,
 //! including small object, large object, and mixed workloads.
 
+extern crate alloc;
+
+use alloc::vec;
 use crate::tests::allocator_tester::AllocatorTestCase;
 
 /// Workload trait: Defines a common interface for all workloads.

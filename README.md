@@ -1,217 +1,73 @@
-# ArceOS
+# Unfound
 
-[![CI](https://github.com/arceos-org/arceos/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/arceos-org/arceos/actions/workflows/build.yml)
-[![CI](https://github.com/arceos-org/arceos/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/arceos-org/arceos/actions/workflows/test.yml)
-[![Docs](https://img.shields.io/badge/docs-pages-green)](https://arceos-org.github.io/arceos/)
+Unfound 是 ArceOS 模块化微内核的个人定制分支，保留上游架构并作为调度器、驱动和平台适配的实验沙箱。本分支演进较快，版本间可能出现不兼容变更。
 
-An experimental modular operating system (or unikernel) written in Rust.
+内存管理工作（本分支重点）：
+- 调整物理页分配器与伙伴系统接口，澄清与硬件无关的内存抽象。
+- 引入按域隔离（内核/用户/设备）的虚拟地址空间布局，支撑安全性实验。
+- 增强内存诊断日志与统计，便于问题复现与性能画像。
+- 补充并调优页面回收策略，评估吞吐与尾延迟表现。
 
-ArceOS was inspired a lot by [Unikraft](https://github.com/unikraft/unikraft).
+Memory management focus (EN): refining allocator/buddy interfaces, per-domain VA layouts, richer MM telemetry, and reclamation tuning.
 
-🚧 Working In Progress.
+## 支持的目标平台
+- 架构：x86_64、aarch64、riscv64、loongarch64
+- 默认平台：QEMU pc-q35（x86_64）、QEMU virt（aarch64/riscv64/loongarch64）
 
-## Features & TODOs
+## 项目目录结构
+- modules：内核组件（内存、调度、驱动、网络、文件系统、日志等）
+- api：应用接口（axfeat、arceos_api、arceos_posix_api）
+- ulib：用户态库（axstd、axlibc）
+- examples：子系统示例与冒烟测试
+- configs：平台配置
+- scripts、tools：构建与 QEMU 运行脚本
+- doc：设计文档与图表
 
-* [x] Architecture: x86_64, riscv64, aarch64, loongarch64
-* [x] Platform: QEMU pc-q35 (x86_64), virt (riscv64/aarch64/loongarch64)
-* [x] Multi-thread
-* [x] FIFO/RR/CFS scheduler
-* [x] VirtIO net/blk/gpu drivers
-* [x] TCP/UDP net stack using [smoltcp](https://github.com/smoltcp-rs/smoltcp)
-* [x] Synchronization/Mutex
-* [x] SMP scheduling with [per-cpu run queue](https://github.com/arceos-org/arceos/discussions/181)
-* [x] File system
-* [ ] Compatible with Linux apps
-* [ ] Interrupt driven device I/O
-* [ ] Async I/O
+## 快速开始
 
-## Quick Start
+### 前置依赖
+- 安装 rust-toolchain.toml 指定的工具链（rustup）
+- 安装辅助工具：
+	```bash
+	cargo install cargo-binutils axconfig-gen cargo-axplat
+	```
+- 安装 QEMU：
+	```bash
+	# Ubuntu/Debian
+	sudo apt-get install qemu-system
+	# macOS
+	brew install qemu
+	```
+- 可选（C 应用）：`sudo apt install libclang-dev`，并安装 aarch64/riscv64/x86_64/loongarch64 的 musl 交叉工具链，将其 bin 目录加入 PATH。
 
-### Build and Run through Docker
-
-Install [Docker](https://www.docker.com/) in your system.
-
-Then build all dependencies through provided dockerfile:
-
+### 编译并运行示例
 ```bash
-docker build -t arceos -f Dockerfile .
+# 在仓库根目录
+make A=examples/helloworld ARCH=aarch64 LOG=info run
 ```
 
-Create a container and build/run app:
-```bash
-docker run -it -v $(pwd):/arceos -w /arceos arceos bash
+常用参数：`SMP=<cpus>` 设置核数；`NET=y` 启用 virtio-net；`BLK=y` 启用 virtio-blk；`GRAPHIC=y` 启用 virtio-gpu。完整列表见 Makefile。
 
-# Now build/run app in the container
-make A=examples/helloworld ARCH=aarch64 run
-```
+### 构建自定义 Rust 应用
+1. 创建 `no_std`、`no_main` 包，添加依赖：
+	 ```toml
+	 [dependencies]
+	 axstd = { path = "/path/to/unfound/ulib/axstd", features = ["..."] }
+	 ```
+2. 用 `#[unsafe(no_mangle)]` 标记入口，按 `axstd`（类似 Rust `std`）编程。
+3. 在本仓库环境构建运行：
+	 ```bash
+	 make -C /path/to/unfound A=$(pwd) ARCH=<arch> run
+	 ```
 
-### Manually Build and Run
-#### 1. Install Build Dependencies
+### 构建自定义 C 应用
+1. 在应用目录添加 `axbuild.mk`（列出对象文件）和可选 `features.txt`（每行一个功能）。
+2. 使用同样的 make 命令，令 `A` 指向应用目录。
 
-Install [cargo-binutils](https://github.com/rust-embedded/cargo-binutils) to use `rust-objcopy` and `rust-objdump` tools, and [axconfig-gen](https://github.com/arceos-org/axconfig-gen) for kernel configuration, and [cargo-axplat](https://github.com/arceos-org/axplat_crates/tree/dev/cargo-axplat) for platform configuration:
+## 其他说明
+- 默认配置输出到 `.axconfig.toml`，可用 `OUT_CONFIG` 重定向。
+- 构建产物位于 `target/`，可用 `TARGET_DIR` 覆盖。
+- 本仓库紧跟上游 ArceOS，同步补丁直接提交于此。
 
-```bash
-cargo install cargo-binutils axconfig-gen cargo-axplat
-```
-
-##### Dependencies for running apps
-
-```bash
-# for Debian/Ubuntu
-sudo apt-get install qemu-system
-# for macos
-brew install qemu
-```
-
-##### Dependencies for building C apps (optional)
-
-Install `libclang-dev`:
-
-```bash
-sudo apt install libclang-dev
-```
-
-Download & install [musl](https://musl.cc) toolchains:
-
-```bash
-# download
-wget https://musl.cc/aarch64-linux-musl-cross.tgz
-wget https://musl.cc/riscv64-linux-musl-cross.tgz
-wget https://musl.cc/x86_64-linux-musl-cross.tgz
-wget https://github.com/LoongsonLab/oscomp-toolchains-for-oskernel/releases/download/loongarch64-linux-musl-cross-gcc-13.2.0/loongarch64-linux-musl-cross.tgz
-# install
-tar zxf aarch64-linux-musl-cross.tgz
-tar zxf riscv64-linux-musl-cross.tgz
-tar zxf x86_64-linux-musl-cross.tgz
-tar zxf loongarch64-linux-musl-cross.tgz
-# exec below command in bash OR add below info in ~/.bashrc
-export PATH=`pwd`/x86_64-linux-musl-cross/bin:`pwd`/aarch64-linux-musl-cross/bin:`pwd`/riscv64-linux-musl-cross/bin:`pwd`/loongarch64-linux-musl-cross/bin:$PATH
-```
-
-Other systems and arch please refer to [Qemu Download](https://www.qemu.org/download/#linux)
-
-#### 2. Build & Run
-
-```bash
-# build app in arceos directory
-make A=path/to/app ARCH=<arch> LOG=<log>
-```
-
-Where `path/to/app` is the relative path to the application. Examples applications can be found in the [examples](examples/) directory or the [arceos-apps](https://github.com/arceos-org/arceos-apps) repository.
-
-`<arch>` should be one of `riscv64`, `aarch64`, `x86_64`, `loongarch64`.
-
-`<log>` should be one of `off`, `error`, `warn`, `info`, `debug`, `trace`.
-
-More arguments and targets can be found in [Makefile](Makefile).
-
-For example, to run the [httpserver](examples/httpserver/) on `qemu-system-aarch64` with 4 cores and log level `info`:
-
-```bash
-make A=examples/httpserver ARCH=aarch64 LOG=info SMP=4 run NET=y
-```
-
-Note that the `NET=y` argument is required to enable the network device in QEMU. These arguments (`BLK`, `GRAPHIC`, etc.) only take effect at runtime not build time.
-
-## How to write ArceOS apps
-
-You can write and build your custom applications outside the ArceOS source tree.
-Examples are given below and in the [app-helloworld](https://github.com/arceos-org/app-helloworld) and [arceos-apps](https://github.com/arceos-org/arceos-apps) repositories.
-
-### Rust
-
-1. Create a new rust package with `no_std` and `no_main` environment.
-2. Add `axstd` dependency and features to enable to `Cargo.toml`:
-
-    ```toml
-    [dependencies]
-    axstd = { path = "/path/to/arceos/ulib/axstd", features = ["..."] }
-    # or use git repository:
-    # axstd = { git = "https://github.com/arceos-org/arceos.git", features = ["..."] }
-    ```
-
-3. Call library functions from `axstd` in your code, just like the Rust [std](https://doc.rust-lang.org/std/) library.
-
-    Remember to annotate the `main` function with `#[unsafe(no_mangle)]` (see this [example](examples/helloworld/src/main.rs)).
-
-4. Build your application with ArceOS, by running the `make` command in the application directory:
-
-    ```bash
-    # in app directory
-    make -C /path/to/arceos A=$(pwd) ARCH=<arch> run
-    # more args: LOG=<log> SMP=<smp> NET=[y|n] ...
-    ```
-
-    All arguments and targets are the same as above.
-
-### C
-
-1. Create `axbuild.mk` and `features.txt` in your project:
-
-    ```bash
-    app/
-    ├── foo.c
-    ├── bar.c
-    ├── axbuild.mk      # optional, if there is only one `main.c`
-    └── features.txt    # optional, if only use default features
-    ```
-
-2. Add build targets to `axbuild.mk`, add features to enable to `features.txt` (see this [example](examples/httpserver-c/)):
-
-    ```bash
-    # in axbuild.mk
-    app-objs := foo.o bar.o
-    ```
-
-    ```bash
-    # in features.txt
-    alloc
-    paging
-    net
-    ```
-
-3. Build your application with ArceOS, by running the `make` command in the application directory:
-
-    ```bash
-    # in app directory
-    make -C /path/to/arceos A=$(pwd) ARCH=<arch> run
-    # more args: LOG=<log> SMP=<smp> NET=[y|n] ...
-    ```
-
-## How to build ArceOS for specific platforms and devices
-
-You need to manually link your application with the appropriate platform packages:
-
-```rs
-// Add this line to your application (for raspi4 platform)
-extern crate axplat_aarch64_raspi;
-```
-
-Then set the `MYPLAT` variable when run `make`:
-
-```bash
-# Build helloworld for raspi4
-make MYPLAT=axplat-aarch64-raspi SMP=4 A=examples/helloworld
-```
-
-You may also need to select the corrsponding device drivers by setting the `FEATURES` variable:
-
-```bash
-# Build the shell app for raspi4, and use the SD card driver
-make MYPLAT=axplat-aarch64-raspi SMP=4 A=examples/shell FEATURES=page-alloc-4g,driver-bcm2835-sdhci BUS=mmio
-# Build httpserver for the bare-metal x86_64 platform, and use the ixgbe and ramdisk driver
-make PLAT_CONFIG=$(pwd)/configs/custom/x86_64-pc-oslab.toml A=examples/httpserver FEATURES=page-alloc-4g,driver-ixgbe,driver-ramdisk SMP=4
-```
-
-## How to reuse ArceOS modules in your own project
-
-```toml
-# In Cargo.toml
-[dependencies]
-axalloc = { git = "https://github.com/arceos-org/arceos.git", tag = "v0.2.0" } # modules/axalloc
-axhal = { git = "https://github.com/arceos-org/arceos.git", tag = "v0.2.0" } # modules/axhal
-```
-
-## Design
-
-![](doc/figures/ArceOS.svg)
+## 开源协议
+与上游一致：GPL-3.0-or-later、Apache-2.0、MulanPSL-2.0。

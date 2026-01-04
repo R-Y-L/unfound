@@ -333,25 +333,43 @@ impl PageAllocator for HybridAllocator {
     }
 
     fn get_stats(&self) -> (f64, usize) {
-        // Simple fragmentation estimate for hybrid allocator
-        // We'll compute based on the free-list large blocks
-        let free_list = self.free_list.lock();
-        let mut largest_free = 0usize;
+        // Compute stats based on bitmap
+        let bitmap = self.bitmap.lock();
+        let total_pages = self.total_pages;
+        
+        // Count free pages and find max contiguous free block
         let mut total_free = 0usize;
-
-        for info in free_list.values() {
-            total_free += info.size;
-            if info.size > largest_free {
-                largest_free = info.size;
+        let mut max_contiguous = 0usize;
+        let mut current_contiguous = 0usize;
+        
+        // Check each page in bitmap: bit=1 means free
+        for i in 0..total_pages {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            let is_free = if byte_idx < bitmap.len() {
+                (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            } else {
+                false
+            };
+            
+            if is_free {
+                total_free += 1;
+                current_contiguous += 1;
+                if current_contiguous > max_contiguous {
+                    max_contiguous = current_contiguous;
+                }
+            } else {
+                current_contiguous = 0;
             }
         }
-
+        
         let fragmentation = if total_free == 0 {
             0.0
         } else {
-            1.0 - (largest_free as f64 / total_free as f64)
+            1.0 - (max_contiguous as f64 / total_free as f64)
         };
         
-        (fragmentation, total_free)
+        let total_free_bytes = total_free * PAGE_SIZE;
+        (fragmentation, total_free_bytes)
     }
 }

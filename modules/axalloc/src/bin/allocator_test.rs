@@ -1,187 +1,371 @@
 //! Binary for running allocator tests from command line.
+//!
+//! This is the main entry point for the allocator testing framework.
+//! It supports comprehensive testing of memory allocators with various
+//! test suites and configurations.
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Run complete test suite
+//! cargo run --bin allocator_test --features "buddy std" all
+//!
+//! # Run specific test suite
+//! cargo run --bin allocator_test --features "buddy std" basic
+//! cargo run --bin allocator_test --features "buddy std" fragmentation
+//! cargo run --bin allocator_test --features "buddy std" stability
+//! cargo run --bin allocator_test --features "buddy std" time-dimension
+//!
+//! # Compare allocators
+//! cargo run --bin allocator_test --features "buddy bitmap hybrid std" --compare
+//!
+//! # Specify allocator and config
+//! cargo run --bin allocator_test --features "buddy std" -a buddy -c large all
+//! ```
 
+use axalloc::tests::{
+    run_allocator_tests_from_cli,
+    run_tests_by_name,
+    compare_allocators,
+    print_comparison_table,
+    run_basic_performance_test,
+    run_fragmentation_test,
+    run_stability_test,
+    run_time_dimension_test,
+    TestConfig,
+    TimeDimensionConfig,
+};
 use axalloc::allocators::PageAllocator;
 
-// Import concrete allocators based on feature flags and expose unified testing
 #[cfg(feature = "buddy")]
 use axalloc::allocators::BuddyAllocator;
 #[cfg(feature = "bitmap")]
 use axalloc::allocators::BitmapAllocator;
-#[cfg(all(feature = "hybrid", not(feature = "buddy"), not(feature = "bitmap")))]
+#[cfg(feature = "hybrid")]
 use axalloc::allocators::HybridAllocator;
-
-const PAGE_SIZE: usize = 4096;
-
-// Simplified test structures
-#[derive(Debug)]
-pub struct TestResult {
-    pub total_allocations: usize,
-    pub successful_allocations: usize,
-    pub failed_allocations: usize,
-    pub average_allocation_time_ns: u64,
-    pub average_deallocation_time_ns: u64,
-    pub fragmentation: f64,
-    pub peak_memory_usage: usize,
-    pub remaining_free_memory: usize,
-}
-
-pub struct AllocatorTestCase {
-    pub allocation_sizes: Vec<usize>,
-    pub allocation_order: Vec<usize>,
-    pub deallocation_order: Vec<usize>,
-}
-
-pub struct AllocatorTester;
-
-impl AllocatorTester {
-    pub fn run(
-        allocator: &dyn PageAllocator,
-        test_case: &AllocatorTestCase,
-    ) -> TestResult {
-        // Track timings and counts
-        let mut successful_allocations = 0usize;
-        let mut failed_allocations = 0usize;
-        let mut peak_memory_usage = 0usize;
-
-        // Record allocated addresses so we can free by address later
-        let mut allocated_addrs: Vec<Option<usize>> = vec![None; test_case.allocation_sizes.len()];
-
-        let start_alloc = std::time::Instant::now();
-        for (i, &size) in test_case.allocation_sizes.iter().enumerate() {
-            match allocator.alloc_pages(size, PAGE_SIZE) {
-                Ok(addr) => {
-                    successful_allocations += 1;
-                    allocated_addrs[i] = Some(addr);
-                    peak_memory_usage += size * PAGE_SIZE;
-                }
-                Err(_) => {
-                    failed_allocations += 1;
-                }
-            }
-        }
-        let total_alloc_time = start_alloc.elapsed().as_nanos() as u64;
-
-        // Deallocate by using recorded addresses according to deallocation_order
-        let start_dealloc = std::time::Instant::now();
-        for &idx in &test_case.deallocation_order {
-            if let Some(Some(addr)) = allocated_addrs.get(idx).cloned() {
-                allocator.dealloc_pages(addr, 1);
-            }
-        }
-        let total_dealloc_time = start_dealloc.elapsed().as_nanos() as u64;
-
-        // Get fragmentation and free memory from allocator's diagnostic stats
-        let (fragmentation, total_free_memory) = allocator.get_stats();
-
-        TestResult {
-            total_allocations: test_case.allocation_sizes.len(),
-            successful_allocations,
-            failed_allocations,
-            average_allocation_time_ns: if test_case.allocation_sizes.len() > 0 { total_alloc_time / test_case.allocation_sizes.len() as u64 } else { 0 },
-            average_deallocation_time_ns: if test_case.deallocation_order.len() > 0 { total_dealloc_time / test_case.deallocation_order.len() as u64 } else { 0 },
-            fragmentation,
-            peak_memory_usage,
-            remaining_free_memory: total_free_memory,
-        }
-    }
-}
-
-impl AllocatorTester {
-    /// Backwards-compatible name used by callers in this binary.
-    pub fn run_test(
-        allocator: &dyn PageAllocator,
-        test_case: &AllocatorTestCase,
-    ) -> TestResult {
-        Self::run(allocator, test_case)
-    }
-}
-
-// Workloads
-pub trait Workload {
-    fn generate_test_case(&self) -> AllocatorTestCase;
-}
-
-pub struct SmallObjectWorkload;
-
-impl Workload for SmallObjectWorkload {
-    fn generate_test_case(&self) -> AllocatorTestCase {
-        AllocatorTestCase {
-            allocation_sizes: vec![1; 500], // Increased from 100 to 500
-            allocation_order: (0..500).collect(),
-            deallocation_order: (0..500).rev().collect(),
-        }
-    }
-}
-
-pub struct LargeObjectWorkload;
-
-impl Workload for LargeObjectWorkload {
-    fn generate_test_case(&self) -> AllocatorTestCase {
-        AllocatorTestCase {
-            allocation_sizes: vec![64; 50], // Increased from 10 to 50
-            allocation_order: (0..50).collect(),
-            deallocation_order: (0..50).rev().collect(),
-        }
-    }
-}
-
-pub struct MixedWorkload;
-
-impl Workload for MixedWorkload {
-    fn generate_test_case(&self) -> AllocatorTestCase {
-        AllocatorTestCase {
-            allocation_sizes: vec![1, 16, 4, 32, 1, 8, 2, 64, 1, 4, 16, 2], // More realistic mixed sizes
-            allocation_order: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-            deallocation_order: vec![11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
-        }
-    }
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    
     if args.len() < 2 {
-        println!("Usage: {} <workload>", args[0]);
-        println!("Workloads: all, small, large, mixed");
+        print_usage(&args[0]);
         return;
     }
+    
+    // Parse arguments
+    let mut workload = "all".to_string();
+    let mut allocator_name = "default".to_string();
+    let mut config_level = "medium".to_string();
+    let mut compare_mode = false;
+    let mut verbose = false;
+    
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--workload" | "-w" => {
+                if i + 1 < args.len() {
+                    workload = args[i + 1].clone();
+                    i += 1;
+                }
+            }
+            "--allocator" | "-a" => {
+                if i + 1 < args.len() {
+                    allocator_name = args[i + 1].clone();
+                    i += 1;
+                }
+            }
+            "--config" | "-c" => {
+                if i + 1 < args.len() {
+                    config_level = args[i + 1].clone();
+                    i += 1;
+                }
+            }
+            "--compare" => {
+                compare_mode = true;
+            }
+            "--verbose" | "-v" => {
+                verbose = true;
+            }
+            "--help" | "-h" => {
+                print_usage(&args[0]);
+                return;
+            }
+            other => {
+                // First positional arg is workload
+                if !other.starts_with('-') && i == 1 {
+                    workload = other.to_string();
+                } else if !other.starts_with('-') {
+                    workload = other.to_string();
+                }
+            }
+        }
+        i += 1;
+    }
+    
+    // Select config
+    let mut config = match config_level.as_str() {
+        "small" | "quick" => TestConfig::small(),
+        "medium" | "default" => TestConfig::medium(),
+        "large" | "stress" => TestConfig::large(),
+        _ => TestConfig::medium(),
+    };
+    config.verbose = verbose;
+    
+    if compare_mode {
+        run_comparison(&config);
+    } else {
+        run_workload(&workload, &allocator_name, &config);
+    }
+}
 
-    let workload = &args[1];
+fn print_usage(prog: &str) {
+    println!("Allocator Testing Framework");
+    println!("============================");
+    println!();
+    println!("Usage: {} [OPTIONS] [WORKLOAD]", prog);
+    println!();
+    println!("Workloads:");
+    println!("  all, complete        Run complete test suite (default)");
+    println!("  basic                Run basic performance tests");
+    println!("  fragmentation        Run fragmentation tests");
+    println!("  stability            Run stability tests");
+    println!("  time-dimension       Run time-dimension (long-running) tests");
+    println!("  legacy               Run legacy workload tests");
+    println!();
+    println!("Options:");
+    println!("  -a, --allocator NAME   Select allocator (buddy, bitmap, hybrid)");
+    println!("  -c, --config LEVEL     Config level (small, medium, large)");
+    println!("  --compare              Compare all available allocators");
+    println!("  -v, --verbose          Enable verbose output");
+    println!("  -h, --help             Show this help");
+    println!();
+    println!("Examples:");
+    println!("  {} all", prog);
+    println!("  {} --allocator buddy basic", prog);
+    println!("  {} --config large time-dimension", prog);
+    println!("  {} --compare", prog);
+    println!();
+    println!("Compile with features:");
+    println!("  --features \"buddy std\"      Enable buddy allocator");
+    println!("  --features \"bitmap std\"     Enable bitmap allocator");
+    println!("  --features \"hybrid std\"     Enable hybrid allocator");
+    println!("  --features \"buddy bitmap hybrid std\"  Enable all for comparison");
+}
 
-    // Instantiate the allocator selected at compile time (one feature should be enabled)
-    #[cfg(feature = "buddy")]
-    let allocator: Box<dyn PageAllocator> = Box::new(BuddyAllocator::new());
-    #[cfg(all(feature = "bitmap", not(feature = "buddy")))]
-    let allocator: Box<dyn PageAllocator> = Box::new(BitmapAllocator::new());
-    #[cfg(all(feature = "hybrid", not(feature = "buddy"), not(feature = "bitmap")))]
-    let allocator: Box<dyn PageAllocator> = Box::new(HybridAllocator::new());
+fn get_default_allocator_name() -> &'static str {
+    #[cfg(feature = "hybrid")]
+    return "hybrid";
+    #[cfg(all(feature = "buddy", not(feature = "hybrid")))]
+    return "buddy";
+    #[cfg(all(feature = "bitmap", not(feature = "buddy"), not(feature = "hybrid")))]
+    return "bitmap";
+    #[cfg(not(any(feature = "buddy", feature = "bitmap", feature = "hybrid")))]
+    return "none";
+}
 
-    // Initialize allocator with larger memory region for better success rates
-    allocator.init(0x1000, 0x1000000).unwrap(); // 16MB instead of 64KB
+fn run_comparison(config: &TestConfig) {
+    println!("Running allocator comparison...\n");
+    
+    let names: Vec<&str> = vec![
+        #[cfg(feature = "buddy")]
+        "buddy",
+        #[cfg(feature = "bitmap")]
+        "bitmap",
+        #[cfg(feature = "hybrid")]
+        "hybrid",
+    ];
+    
+    if names.is_empty() {
+        println!("No allocators available. Enable at least one allocator feature.");
+        return;
+    }
+    
+    let results = compare_allocators(&names, config);
+    print_comparison_table(&results);
+    
+    println!("\nDetailed Reports:\n");
+    for (_name, report) in &results {
+        println!("{}", report.to_full_report());
+    }
+}
 
-    match workload.as_str() {
-        "all" => run_all_tests(&*allocator),
-        "small" => run_single_test(&*allocator, "Small Object Workload", SmallObjectWorkload),
-        "large" => run_single_test(&*allocator, "Large Object Workload", LargeObjectWorkload),
-        "mixed" => run_single_test(&*allocator, "Mixed Workload", MixedWorkload),
+fn run_workload(workload: &str, allocator_name: &str, config: &TestConfig) {
+    let name = if allocator_name == "default" {
+        get_default_allocator_name()
+    } else {
+        allocator_name
+    };
+    
+    if name == "none" {
+        println!("No allocator available. Enable an allocator feature.");
+        return;
+    }
+    
+    match workload {
+        "all" | "complete" => {
+            println!("Running complete test suite for {}...\n", name);
+            match run_tests_by_name(name, config) {
+                Ok(report) => println!("{}", report.to_full_report()),
+                Err(e) => println!("Error: {}", e),
+            }
+        }
+        "basic" => {
+            run_basic_test(name, config);
+        }
+        "fragmentation" => {
+            run_frag_test(name, config);
+        }
+        "stability" => {
+            run_stab_test(name, config);
+        }
+        "time-dimension" | "timedim" | "td" => {
+            run_timedim_test(name, config);
+        }
+        "legacy" => {
+            run_allocator_tests_from_cli();
+        }
         _ => {
             println!("Unknown workload: {}", workload);
-            println!("Available workloads: all, small, large, mixed");
+            print_usage("allocator_test");
         }
     }
 }
 
-fn run_all_tests(allocator: &dyn PageAllocator) {
-    println!("Running Small Object Workload...");
-    run_single_test(allocator, "Small Object Workload", SmallObjectWorkload);
-
-    println!("Running Large Object Workload...");
-    run_single_test(allocator, "Large Object Workload", LargeObjectWorkload);
-
-    println!("Running Mixed Workload...");
-    run_single_test(allocator, "Mixed Workload", MixedWorkload);
+fn run_basic_test(name: &str, config: &TestConfig) {
+    println!("Running basic performance tests for {}...\n", name);
+    
+    #[cfg(feature = "buddy")]
+    if name == "buddy" {
+        let allocator = BuddyAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_basic_performance_test(&allocator, &config.basic_perf);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "bitmap")]
+    if name == "bitmap" {
+        let allocator = BitmapAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_basic_performance_test(&allocator, &config.basic_perf);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "hybrid")]
+    if name == "hybrid" {
+        let allocator = HybridAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_basic_performance_test(&allocator, &config.basic_perf);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    println!("Allocator not available: {}", name);
 }
 
-fn run_single_test<W: Workload>(allocator: &dyn PageAllocator, name: &str, workload: W) {
-    let result = AllocatorTester::run_test(allocator, &workload.generate_test_case());
-    println!("{} Result: {:?}", name, result);
+fn run_frag_test(name: &str, config: &TestConfig) {
+    println!("Running fragmentation tests for {}...\n", name);
+    
+    #[cfg(feature = "buddy")]
+    if name == "buddy" {
+        let allocator = BuddyAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_fragmentation_test(&allocator, &config.fragmentation, config.memory_pool_size);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "bitmap")]
+    if name == "bitmap" {
+        let allocator = BitmapAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_fragmentation_test(&allocator, &config.fragmentation, config.memory_pool_size);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "hybrid")]
+    if name == "hybrid" {
+        let allocator = HybridAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_fragmentation_test(&allocator, &config.fragmentation, config.memory_pool_size);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    println!("Allocator not available: {}", name);
+}
+
+fn run_stab_test(name: &str, config: &TestConfig) {
+    println!("Running stability tests for {}...\n", name);
+    
+    #[cfg(feature = "buddy")]
+    if name == "buddy" {
+        let allocator = BuddyAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_stability_test(&allocator, &config.stability);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "bitmap")]
+    if name == "bitmap" {
+        let allocator = BitmapAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_stability_test(&allocator, &config.stability);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "hybrid")]
+    if name == "hybrid" {
+        let allocator = HybridAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let metrics = run_stability_test(&allocator, &config.stability);
+        println!("{}", metrics.to_report());
+        return;
+    }
+    
+    println!("Allocator not available: {}", name);
+}
+
+fn run_timedim_test(name: &str, config: &TestConfig) {
+    println!("Running time-dimension tests for {}...\n", name);
+    println!("This simulates 24 hours of allocator operation.\n");
+    
+    let td_config = if config.memory_pool_size < 128 * 1024 * 1024 {
+        TimeDimensionConfig::quick()
+    } else {
+        TimeDimensionConfig::default()
+    };
+    
+    #[cfg(feature = "buddy")]
+    if name == "buddy" {
+        let allocator = BuddyAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let results = run_time_dimension_test(&allocator, &td_config);
+        println!("{}", results.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "bitmap")]
+    if name == "bitmap" {
+        let allocator = BitmapAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let results = run_time_dimension_test(&allocator, &td_config);
+        println!("{}", results.to_report());
+        return;
+    }
+    
+    #[cfg(feature = "hybrid")]
+    if name == "hybrid" {
+        let allocator = HybridAllocator::new();
+        allocator.init(config.start_vaddr, config.memory_pool_size).unwrap();
+        let results = run_time_dimension_test(&allocator, &td_config);
+        println!("{}", results.to_report());
+        return;
+    }
+    
+    println!("Allocator not available: {}", name);
 }

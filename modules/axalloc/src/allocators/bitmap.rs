@@ -51,8 +51,16 @@ impl PageAllocator for BitmapAllocator {
     }
 
     fn get_stats(&self) -> (f64, usize) {
-        // BitmapAllocator doesn't track fragmentation granularly;
-        // for now return default (allocator doesn't expose stats)
-        (0.0, 0)
+        let inner = self.inner.lock();
+        let total_pages = inner.total_pages();
+        let used_pages = inner.used_pages();
+        let free_pages = total_pages - used_pages;
+
+        // Calculate fragmentation - bitmap doesn't easily track contiguous blocks
+        // Estimate fragmentation as 0 for simple bitmap
+        let fragmentation = 0.0;
+        let total_free_bytes = free_pages * PAGE_SIZE;
+
+        (fragmentation, total_free_bytes)
     }
 }

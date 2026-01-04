@@ -3,7 +3,12 @@
 //! This module provides the `AllocatorTester` struct to test memory allocators
 //! and collect performance metrics.
 
+extern crate std;
+extern crate alloc;
+
 use std::time::Instant;
+use alloc::vec::Vec;
+use alloc::vec;
 use crate::allocators::PageAllocator;
 
 /// Test result structure to store metrics.
@@ -31,7 +36,7 @@ pub struct AllocatorTester;
 
 impl AllocatorTester {
     /// Run a test case on the given allocator.
-    pub fn run_test<A: PageAllocator>(
+    pub fn run_test<A: PageAllocator + ?Sized>(
         allocator: &A,
         test_case: &AllocatorTestCase,
     ) -> TestResult {

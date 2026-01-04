@@ -21,8 +21,8 @@ pub struct BuddyAllocator {
     max_order: usize,
     /// free_lists[order] contains start indices (in pages) of free blocks of size 2^order
     free_lists: SpinNoIrq<Vec<Vec<usize>>>,
-    /// allocation map: start_index -> order
-    alloc_map: SpinNoIrq<BTreeMap<usize, usize>>,
+    /// allocation map: start_index -> (order, original_num_pages)
+    alloc_map: SpinNoIrq<BTreeMap<usize, (usize, usize)>>,
     used_pages: SpinNoIrq<usize>,
 }
 
@@ -130,7 +130,7 @@ impl PageAllocator for BuddyAllocator {
                     let buddy_idx = cur_idx + (1usize << cur_order);
                     self.push_free(cur_order, buddy_idx);
                 }
-                self.alloc_map.lock().insert(cur_idx, order);
+                self.alloc_map.lock().insert(cur_idx, (order, num_pages));
                 *self.used_pages.lock() += 1usize << order;
                 return Ok(self.base + cur_idx * PAGE_SIZE);
             }
@@ -148,52 +148,60 @@ impl PageAllocator for BuddyAllocator {
         let needed = num_pages.next_power_of_two();
         let order = ceil_log2(needed);
         if self.remove_free_exact(order, idx) {
-            self.alloc_map.lock().insert(idx, order);
             *self.used_pages.lock() += 1usize << order;
+            self.alloc_map.lock().insert(idx, (order, num_pages));
             return Ok(start);
         }
         Err(AllocError::NoMemory)
     }
 
     fn dealloc_pages(&self, pos: usize, _num_pages: usize) {
-        if pos < self.base || pos >= self.base + self.total_pages * PAGE_SIZE { return; }
-        if !is_aligned(pos, PAGE_SIZE) { return; }
-        let mut idx = (pos - self.base) / PAGE_SIZE;
-        let order = match self.alloc_map.lock().remove(&idx) {
-            Some(o) => o,
-            None => return,
-        };
-        let mut cur_order = order;
-        loop {
-            let buddy_idx = idx ^ (1usize << cur_order);
-            if self.remove_free_exact(cur_order, buddy_idx) {
-                idx = cmp::min(idx, buddy_idx);
-                cur_order += 1;
-                if cur_order > self.max_order { break; }
-                continue;
-            } else { break; }
+        if pos < self.base {
+            return;
         }
-        self.push_free(cur_order, idx);
-        *self.used_pages.lock() -= 1usize << order;
+        let idx = (pos - self.base) / PAGE_SIZE;
+        if let Some((order, _)) = self.alloc_map.lock().remove(&idx) {
+            let mut current_idx = idx;
+            let mut current_order = order;
+            *self.used_pages.lock() -= 1usize << order;
+
+            while current_order < self.max_order {
+                let buddy_idx = current_idx ^ (1usize << current_order);
+                if self.remove_free_exact(current_order, buddy_idx) {
+                    current_idx = cmp::min(current_idx, buddy_idx);
+                    current_order += 1;
+                } else {
+                    break;
+                }
+            }
+            self.push_free(current_order, current_idx);
+        }
     }
 
     fn get_stats(&self) -> (f64, usize) {
-        // Calculate fragmentation from free_list snapshot
-        let free_list = self.free_lists.lock();
-        let mut largest_free_block = 0usize;
-        let mut total_free_memory: usize = 0;
-        for v in free_list.iter() {
-            for &b in v.iter() {
-                if b > largest_free_block { largest_free_block = b; }
-                total_free_memory += b;
-            }
-        }
-        let fragmentation = if total_free_memory == 0 {
-            0.0
+        let free_lists = self.free_lists.lock();
+        let alloc_map = self.alloc_map.lock();
+        let used_pages = *self.used_pages.lock();
+
+        let total_free_pages = self.total_pages - used_pages;
+
+        let max_free_contiguous_pages = free_lists
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, free_list)| !free_list.is_empty())
+            .map_or(0, |(order, _)| 1 << order);
+
+        // Calculate fragmentation rate
+        let total_free = total_free_pages * PAGE_SIZE;
+        let max_contiguous = max_free_contiguous_pages * PAGE_SIZE;
+        let fragmentation = if total_free > 0 {
+            1.0 - (max_contiguous as f64 / total_free as f64)
         } else {
-            1.0 - (largest_free_block as f64 / total_free_memory as f64)
+            0.0
         };
-        (fragmentation, total_free_memory)
+
+        (fragmentation, total_free)
     }
 }
 
