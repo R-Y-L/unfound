@@ -55,6 +55,10 @@ UnfoundOS是我们参加2025年全国大学生计算机系统能力大赛-操作
   - IPC 功能测试：验证消息队列的阻塞/非阻塞收发、类型匹配准确性，以及管道的流式传输能力。
   - 并发压力测试：在多核环境下进行高频进程创建与销毁，验证 RwLock 的稳定性与死锁预防。
 
+## 项目文档
+
+[UnfoundOS设计文档](https://gitlab.eduxiji.net/T202510336998092/project3035746-358028/-/blob/main/doc/UnfoundOS.pdf)
+
 ## 支持的目标平台
 - 架构：x86_64、aarch64、riscv64、loongarch64
 - 默认平台：QEMU pc-q35（x86_64）、QEMU virt（aarch64/riscv64/loongarch64）
