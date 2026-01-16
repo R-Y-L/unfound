@@ -5,6 +5,9 @@
 //! usable for runtime selection. It's lightweight and mirrors the behavior
 //! of the existing page allocator used by `GlobalAllocator`.
 
+extern crate alloc;
+
+use alloc::boxed::Box;
 use allocator::{AllocError, BitmapPageAllocator, BaseAllocator, PageAllocator as AllocatorPageAllocator};
 use kspin::SpinNoIrq;
 use super::PageAllocator;
@@ -12,13 +15,14 @@ use super::PageAllocator;
 const PAGE_SIZE: usize = 4096;
 
 pub struct BitmapAllocator {
-    inner: SpinNoIrq<BitmapPageAllocator<PAGE_SIZE>>,
+    // 使用 Box 在堆上分配，避免栈溢出
+    inner: SpinNoIrq<Box<BitmapPageAllocator<PAGE_SIZE>>>,
 }
 
 impl BitmapAllocator {
     pub fn new() -> Self {
         Self {
-            inner: SpinNoIrq::new(BitmapPageAllocator::new()),
+            inner: SpinNoIrq::new(Box::new(BitmapPageAllocator::new())),
         }
     }
 }
@@ -29,6 +33,10 @@ impl PageAllocator for BitmapAllocator {
     }
 
     fn init(&self, start_vaddr: usize, size: usize) -> Result<(), AllocError> {
+        // Debug: 打印初始化参数
+        #[cfg(feature = "log")]
+        log::debug!("BitmapAllocator::init: start=0x{:x}, size={}", start_vaddr, size);
+        
         self.inner.lock().init(start_vaddr, size);
         Ok(())
     }

@@ -98,7 +98,7 @@ cd modules/axalloc
 cargo run --bin allocator_test --features "buddy std" all
 # 更多特性或对比运行请参考测试文档
 ```
-详细说明请参见：modules/axalloc/src/tests/README.md
+详细说明请参见：[内存分配器测试说明](https://gitlab.eduxiji.net/T202510336998092/project3035746-358028/-/blob/main/modules/axalloc/src/tests/README.md)
 
 ## 致谢
 [ArceOS](https://github.com/rcore-os/arceos)  

@@ -480,19 +480,27 @@ pub fn run_stability_test<A: PageAllocator + ?Sized>(
     metrics.memory_leak_rate_bps = leaked_bytes as f64 / simulated_seconds;
     
     // Performance degradation tracking over simulated time
-    // First, build up fragmentation state for each time point
+    // IMPORTANT: We accumulate fragmentation across time points to simulate real long-running behavior
+    let mut persistent_allocs: Vec<(usize, usize)> = Vec::new();
+    
     for time_hours in config.measurement_times_hours.iter() {
-        // Build up fragmentation proportional to time
-        let frag_ops = (*time_hours * 100.0) as usize;
-        let mut frag_allocs: Vec<(usize, usize)> = Vec::new();
+        // Build up ADDITIONAL fragmentation proportional to time delta
+        // This simulates continuous operation over time
+        let frag_ops = if *time_hours == 0.0 {
+            0
+        } else {
+            (*time_hours * 50.0) as usize  // Operations proportional to time
+        };
+        
         for _ in 0..frag_ops {
             let size = 1 + rng.next_usize(32);
             if let Ok(addr) = allocator.alloc_pages(size, PAGE_SIZE) {
-                frag_allocs.push((addr, size));
+                persistent_allocs.push((addr, size));
             }
-            if !frag_allocs.is_empty() && rng.next_f64() < 0.7 {
-                let i = rng.next_usize(frag_allocs.len());
-                let (a, s) = frag_allocs.swap_remove(i);
+            // Randomly free some (but keep ~30% to simulate memory pressure)
+            if !persistent_allocs.is_empty() && rng.next_f64() < 0.7 {
+                let i = rng.next_usize(persistent_allocs.len());
+                let (a, s) = persistent_allocs.swap_remove(i);
                 allocator.dealloc_pages(a, s);
             }
         }
@@ -534,10 +542,12 @@ pub fn run_stability_test<A: PageAllocator + ?Sized>(
             metrics.throughput_over_time.push((*time_hours, ops_per_sec));
         }
         
-        // Clean up fragmentation state
-        for (a, s) in frag_allocs {
-            allocator.dealloc_pages(a, s);
-        }
+        // DO NOT clean up here - let fragmentation accumulate
+    }
+    
+    // Clean up all persistent allocations at the end
+    for (a, s) in persistent_allocs {
+        allocator.dealloc_pages(a, s);
     }
     
     // Multi-thread contention measurement
@@ -556,17 +566,24 @@ pub fn run_stability_test<A: PageAllocator + ?Sized>(
         }
         
         // Measure with interleaved operations (simulates contention pattern)
-        // Multiple rapid alloc/dealloc cycles stress the lock
+        // Allocate blocks that we will free after measurement
+        let mut contention_blocks: Vec<(usize, usize)> = Vec::new();
         let mut contended_times: Vec<u64> = Vec::new();
         for _ in 0..200 {
             // Interleave with different sizes to stress locking
-            let _ = allocator.alloc_pages(2, PAGE_SIZE);
+            if let Ok(block_addr) = allocator.alloc_pages(2, PAGE_SIZE) {
+                contention_blocks.push((block_addr, 2));
+            }
             let start = Instant::now();
             if let Ok(addr) = allocator.alloc_pages(1, PAGE_SIZE) {
                 let t = start.elapsed().as_nanos() as u64;
                 contended_times.push(t);
                 allocator.dealloc_pages(addr, 1);
             }
+        }
+        // Clean up contention blocks
+        for (addr, size) in contention_blocks {
+            allocator.dealloc_pages(addr, size);
         }
         
         if !baseline_times.is_empty() && !contended_times.is_empty() {

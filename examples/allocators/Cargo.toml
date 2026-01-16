@@ -4,6 +4,16 @@ version = "0.1.0"
 edition.workspace = true
 authors = ["R-Y-L"]
 
+[features]
+default = ["buddy", "bitmap", "hybrid"]
+axstd = ["dep:axstd", "axstd/alloc"]
+# 分配器选择 - 传递给 axalloc
+buddy = ["axalloc/buddy"]
+bitmap = ["axalloc/bitmap"]
+hybrid = ["axalloc/hybrid"]
+# 运行时切换支持
+runtime-switch = ["axalloc/runtime-switch"]
+
 [dependencies]
 axstd = { workspace = true, optional = true }
 axalloc = { path = "../../modules/axalloc" } 
