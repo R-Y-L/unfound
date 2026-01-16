@@ -18,11 +18,11 @@
 
 ### 2.1 命令行运行测试
 
-bash
-
-运行
 
 ```bash
+# 进入分配器测试模块目录
+cd modules/axalloc
+
 # 运行 Buddy 分配器全量测试套件
 cargo run --bin allocator_test --features "buddy std" all
 
@@ -40,8 +40,6 @@ cargo run --bin allocator_test --features "buddy std" -c large all
 ```
 
 ### 2.2 命令行参数说明
-
-plaintext
 
 ```plaintext
 使用方式: allocator_test [可选参数] [测试负载]
@@ -66,9 +64,6 @@ plaintext
 
 ### 3.1 基础性能测试
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::{run_basic_performance_test, BasicPerfConfig};
@@ -86,9 +81,6 @@ println!("{}", metrics.to_report());
 
 ### 3.2 全量测试套件
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::{run_complete_test, TestConfig};
@@ -106,9 +98,6 @@ println!("{}", report.to_full_report());
 
 ### 3.3 时间维度测试
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::{run_time_dimension_test, TimeDimensionConfig};
@@ -126,9 +115,6 @@ println!("{}", results.to_report());
 
 ### 3.4 内核兼容测试（no_std）
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::kernel_tests::{
@@ -156,9 +142,6 @@ result.log_result();
 
 ### 4.2 自定义配置
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::{TestConfig, BasicPerfConfig};
@@ -175,7 +158,6 @@ config.verbose = true; // 启用详细输出
 
 ### 5.1 基础性能报告
 
-plaintext
 
 ```plaintext
 【基础性能】
@@ -203,7 +185,6 @@ plaintext
 
 ### 5.2 碎片报告（时间维度）
 
-plaintext
 
 ```plaintext
 【碎片与开销（时间维度）】
@@ -221,7 +202,6 @@ plaintext
 
 ### 5.3 稳定性报告（时间维度）
 
-plaintext
 
 ```plaintext
 【稳定性（时间维度）】
@@ -244,9 +224,6 @@ plaintext
 
 ### 6.1 实现 PageAllocator 特质
 
-rust
-
-运行
 
 ```rust
 pub trait PageAllocator: Send + Sync {
@@ -271,9 +248,6 @@ pub trait PageAllocator: Send + Sync {
 2. 如需条件编译，在 Cargo.toml 中添加对应的 feature 标识；
 3. 使用框架执行测试：
 
-rust
-
-运行
 
 ```rust
 use axalloc::tests::{run_complete_test, TestConfig};
@@ -289,7 +263,6 @@ println!("{}", report.to_full_report());
 
 ## 七、模块结构
 
-plaintext
 
 ```plaintext
 src/tests/

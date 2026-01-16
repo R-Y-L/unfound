@@ -382,7 +382,6 @@ impl AllocatorManager {
     /// 列出可用分配器
     fn list_available(&self) {
         println!("\n可用分配器:");
-        println!("  [*] system  - 系统默认 (GlobalPage)");
         #[cfg(feature = "buddy")]
         println!("  [ ] buddy   - 伙伴系统分配器");
         #[cfg(feature = "bitmap")]
@@ -391,7 +390,7 @@ impl AllocatorManager {
         println!("  [ ] hybrid  - 混合策略分配器");
         
         #[cfg(not(any(feature = "buddy", feature = "bitmap", feature = "hybrid")))]
-        println!("  (未启用任何自定义分配器)");
+        println!("  (未启用任何分配器)");
     }
 }
 
@@ -591,11 +590,7 @@ fn run_compare_test(mgr: &mut AllocatorManager) {
     let mut results: Vec<(&str, TestStats)> = Vec::new();
     let iterations = 100;  // 减少迭代次数加快测试
     
-    // 测试系统分配器
-    mgr.switch_to(AllocatorType::System);
-    results.push(("System", run_basic_test(mgr, iterations)));
-    
-    // 注意：以下分配器共享同一个内存池，需要已初始化
+    // 测试各分配器（共享同一个内存池）
     #[cfg(feature = "buddy")]
     {
         if mgr.switch_to(AllocatorType::Buddy) {
@@ -631,8 +626,6 @@ fn run_compare_test(mgr: &mut AllocatorManager) {
     }
     
     println!("└──────────┴──────────┴──────────┴──────────┴─────────────┘");
-    
-    mgr.switch_to(AllocatorType::System);
 }
 
 // =============================================================================
@@ -656,7 +649,6 @@ fn parse_command(input: &str, mgr: &mut AllocatorManager) -> bool {
         "switch" | "use" => {
             if let Some(name) = parts.get(1) {
                 let target = match *name {
-                    "system" => AllocatorType::System,
                     "buddy" => AllocatorType::Buddy,
                     "bitmap" => AllocatorType::Bitmap,
                     "hybrid" => AllocatorType::Hybrid,
@@ -664,7 +656,7 @@ fn parse_command(input: &str, mgr: &mut AllocatorManager) -> bool {
                 };
                 mgr.switch_to(target);
             } else {
-                println!("用法: switch <system|buddy|bitmap|hybrid>");
+                println!("用法: switch <buddy|bitmap|hybrid>");
             }
         }
         "basic" => {
@@ -718,7 +710,7 @@ fn print_help() {
     println!("║ 分配器管理:                                              ║");
     println!("║   list              列出可用分配器                       ║");
     println!("║   pool <size_mb>    初始化内存池 (默认 16MB)             ║");
-    println!("║   switch <name>     切换分配器 (system/buddy/bitmap/hybrid)║");
+    println!("║   switch <name>     切换分配器 (buddy/bitmap/hybrid)       ║");
     println!("║   stats             显示当前分配器统计                   ║");
     println!("║                                                          ║");
     println!("║ 测试命令:                                                ║");
@@ -791,22 +783,17 @@ fn read_line() -> String {
 fn run_auto_demo(mgr: &mut AllocatorManager) {
     println!("\n=== 自动演示模式 (非交互式) ===\n");
     
-    // 1. 测试系统分配器
-    println!("【阶段 1】测试系统分配器 (GlobalPage)");
-    run_basic_test(mgr, 100);
-    run_rw_test(mgr);
-    
-    // 2. 初始化内存池 - 使用 2MB 以加快 Bitmap 初始化
-    println!("\n【阶段 2】初始化内存池用于自定义分配器");
+    // 1. 初始化内存池 - 使用 2MB 以加快 Bitmap 初始化
+    println!("【阶段 1】初始化内存池");
     if !mgr.init_pool(2) {  // 2MB = 512 页，Bitmap 初始化更快
         println!("内存池初始化失败，跳过自定义分配器测试");
         return;
     }
     
-    // 3. 测试 Buddy 分配器
+    // 2. 测试 Buddy 分配器
     #[cfg(feature = "buddy")]
     {
-        println!("\n【阶段 3】切换到 Buddy 分配器");
+        println!("\n【阶段 2】切换到 Buddy 分配器");
         if mgr.switch_to(AllocatorType::Buddy) {
             run_basic_test(mgr, 100);
             run_rw_test(mgr);
@@ -814,28 +801,28 @@ fn run_auto_demo(mgr: &mut AllocatorManager) {
         }
     }
     
-    // 4. 测试 Bitmap 分配器
+    // 3. 测试 Bitmap 分配器
     #[cfg(feature = "bitmap")]
     {
-        println!("\n【阶段 4】切换到 Bitmap 分配器");
+        println!("\n【阶段 3】切换到 Bitmap 分配器");
         if mgr.switch_to(AllocatorType::Bitmap) {
             run_basic_test(mgr, 100);
             run_rw_test(mgr);
         }
     }
     
-    // 5. 测试 Hybrid 分配器
+    // 4. 测试 Hybrid 分配器
     #[cfg(feature = "hybrid")]
     {
-        println!("\n【阶段 5】切换到 Hybrid 分配器");
+        println!("\n【阶段 4】切换到 Hybrid 分配器");
         if mgr.switch_to(AllocatorType::Hybrid) {
             run_basic_test(mgr, 100);
             run_rw_test(mgr);
         }
     }
     
-    // 6. 性能对比
-    println!("\n【阶段 6】分配器性能对比");
+    // 5. 性能对比
+    println!("\n【阶段 5】分配器性能对比");
     run_compare_test(mgr);
     
     println!("\n=== 自动演示完成 ===");

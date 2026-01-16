@@ -16,7 +16,7 @@ path = "src/bin/allocator_test.rs"
 [features]
 # allocator selection: hybrid is the recommended default
 # NOTE: Only ONE of buddy, bitmap, hybrid should be enabled at compile time
-default = ["hybrid", "tlsf", "allocator/page-alloc-4g"]
+default = ["tlsf", "allocator/page-alloc-4g"]
 tlsf = ["allocator/tlsf"]
 slab = ["allocator/slab"]
 buddy = ["allocator/buddy"]

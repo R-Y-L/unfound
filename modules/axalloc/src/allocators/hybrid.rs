@@ -73,22 +73,50 @@ impl HybridAllocator {
         }
     }
 
-    /// Find first free bit in bitmap.
+    /// Find first free bit run in bitmap - optimized version.
     fn find_free_in_bitmap(&self, needed: usize) -> Option<usize> {
         let bitmap = self.bitmap.lock();
-        for start in 0..self.total_pages - needed + 1 {
-            let mut all_free = true;
-            for i in start..start + needed {
-                let byte_idx = i / 8;
-                let bit_idx = i % 8;
-                if (bitmap[byte_idx] & (1u8 << bit_idx)) == 0 {
-                    all_free = false;
+        let total = self.total_pages;
+        if needed > total {
+            return None;
+        }
+        
+        let mut start = 0;
+        while start + needed <= total {
+            // Quick check: skip bytes that are all zeros (no free pages)
+            let byte_idx = start / 8;
+            let bit_idx = start % 8;
+            
+            // If at byte boundary and whole byte is 0, skip 8 pages
+            if bit_idx == 0 && byte_idx < bitmap.len() && bitmap[byte_idx] == 0 {
+                start += 8;
+                continue;
+            }
+            
+            // Check if current position is free
+            if (bitmap[byte_idx] & (1u8 << bit_idx)) == 0 {
+                start += 1;
+                continue;
+            }
+            
+            // Found a free page, check if we have enough contiguous pages
+            let mut count = 0;
+            for i in start..total.min(start + needed) {
+                let b = i / 8;
+                let bit = i % 8;
+                if (bitmap[b] & (1u8 << bit)) != 0 {
+                    count += 1;
+                } else {
                     break;
                 }
             }
-            if all_free {
+            
+            if count >= needed {
                 return Some(start);
             }
+            
+            // Skip to the position after the blocked page
+            start += count + 1;
         }
         None
     }

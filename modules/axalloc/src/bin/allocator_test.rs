@@ -153,12 +153,13 @@ fn print_usage(prog: &str) {
 }
 
 fn get_default_allocator_name() -> &'static str {
-    #[cfg(feature = "hybrid")]
-    return "hybrid";
-    #[cfg(all(feature = "buddy", not(feature = "hybrid")))]
+    // Priority: buddy > bitmap > hybrid
+    #[cfg(feature = "buddy")]
     return "buddy";
-    #[cfg(all(feature = "bitmap", not(feature = "buddy"), not(feature = "hybrid")))]
+    #[cfg(all(feature = "bitmap", not(feature = "buddy")))]
     return "bitmap";
+    #[cfg(all(feature = "hybrid", not(feature = "buddy"), not(feature = "bitmap")))]
+    return "hybrid";
     #[cfg(not(any(feature = "buddy", feature = "bitmap", feature = "hybrid")))]
     return "none";
 }

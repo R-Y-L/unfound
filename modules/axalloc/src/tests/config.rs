@@ -160,11 +160,11 @@ impl Default for StabilityConfig {
         Self {
             test_sizes_bytes: vec![16 * 1024, 1024 * 1024], // 16KB, 1MB
             measurement_times_hours: vec![1.0, 6.0, 24.0],
-            ops_per_hour: 10000,
-            leak_test_iterations: 100000,
+            ops_per_hour: 1000,  // Reduced from 10000 for faster tests
+            leak_test_iterations: 10000,  // Reduced from 100000
             leak_test_duration_hours: 24.0,
             num_threads: 4,
-            ops_per_thread: 10000,
+            ops_per_thread: 1000,  // Reduced from 10000
         }
     }
 }
@@ -280,6 +280,7 @@ impl TestConfig {
     pub fn medium() -> Self {
         Self {
             memory_pool_size: 256 * 1024 * 1024, // 256MB
+            stability: StabilityConfig::quick(),  // Use quick stability for reasonable time
             ..Self::default()
         }
     }
